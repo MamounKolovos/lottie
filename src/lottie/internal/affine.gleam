@@ -42,7 +42,7 @@ pub fn rotation(radians: Float) -> Affine {
   Affine(a: cos, b: sin, c: -1.0 *. sin, d: cos, e: 0.0, f: 0.0)
 }
 
-pub fn attribute(affine: Affine) -> Attribute(message) {
+pub fn to_attribute(affine: Affine) -> Attribute(message) {
   let value =
     "matrix("
     <> float.to_string(affine.a)

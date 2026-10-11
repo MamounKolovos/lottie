@@ -3,7 +3,6 @@ import glam/doc
 import gleam/bool
 import gleam/deque.{type Deque}
 import gleam/dict.{type Dict}
-import gleam/dynamic
 import gleam/dynamic/decode.{type Decoder}
 import gleam/float
 import gleam/int
@@ -23,181 +22,197 @@ import lustre/effect.{type Effect}
 import lustre/element.{type Element}
 import lustre/element/html
 import lustre/element/svg
-import simplifile
+import rsvp
 
-const opacity_property = "{
-    \"a\": 1,
-    \"k\": [
-        {
-            \"t\": 0,
-            \"s\": [0],
-            \"o\": {\"x\": [0], \"y\": [0]},
-            \"i\": {\"x\": [1], \"y\": [1]}
-        },
-        {
-            \"t\": 60,
-            \"s\": [360]
-        }
-    ],
-    \"ty\": \"s\"
-}"
+// import simplifile
 
-const gradient_property = "{
-    \"p\": 2,
-    \"k\": {
-        \"a\": 1,
-        \"k\": [
-            {
-                \"t\": 0,
-                \"s\": [0, 1, 0, 0, 1, 0, 0, 1],
-                \"o\": {\"x\": [0.333], \"y\": [0]},
-                \"i\": {\"x\": [0.667], \"y\": [1]}
-            },
-            {
-                \"t\": 60,
-                \"s\": [0, 0, 1, 0, 1, 1, 1, 0]
-            }
-        ]
-    },
-    \"ty\": \"g\"
-}"
+const circle_path = BezierPath(
+  closed: True,
+  // Right
+  first: Vertex(
+    position: Vector(200.0, 100.0),
+    in_tangent: Vector(0.0, -55.228475),
+    out_tangent: Vector(0.0, 55.228475),
+  ),
+  // Bottom
+  second: Vertex(
+    position: Vector(100.0, 200.0),
+    in_tangent: Vector(55.228475, 0.0),
+    out_tangent: Vector(-55.228475, 0.0),
+  ),
+  rest: [
+    // Left
+    Vertex(
+      position: Vector(0.0, 100.0),
+      in_tangent: Vector(0.0, 55.228475),
+      out_tangent: Vector(0.0, -55.228475),
+    ),
+    // Top
+    Vertex(
+      position: Vector(100.0, 0.0),
+      in_tangent: Vector(-55.228475, 0.0),
+      out_tangent: Vector(55.228475, 0.0),
+    ),
+  ],
+)
 
-const example_dict = "[
-{\"ind\": 5, \"name\": \"five\"},
-{\"ind\": 10, \"name\": \"ten\"},
-{\"ind\": 15, \"name\": \"fifteen\"}
-]"
-
-const example_data_store = "[
-  { \"kind\": \"data\", \"count\": 5 },
-  { \"kind\": \"data\", \"count\": 6 },
-  { \"kind\": \"data\", \"count\": 7 },
-  { \"kind\": \"end\", \"name\": \"blahblah\" }
-]"
-
-type DataStore {
-  DataStore(name: String, data: List(Int))
-}
-
-fn data_store_decoder() -> Decoder(DataStore) {
-  data_store_decoder_loop(0, [])
-}
-
-fn data_store_decoder_loop(index: Int, data: List(Int)) -> Decoder(DataStore) {
-  use kind <- decode.field(
-    index,
-    decode.field("kind", decode.string, decode.success),
-  )
-
-  case kind {
-    "end" -> {
-      use name <- decode.field(
-        index,
-        decode.field("name", decode.string, decode.success),
-      )
-      decode.success(DataStore(name:, data: list.reverse(data)))
-    }
-    "data" -> {
-      use count <- decode.field(
-        index,
-        decode.field("count", decode.int, decode.success),
-      )
-      data_store_decoder_loop(index + 1, [count, ..data])
-    }
-    _ -> decode.failure(DataStore(name: "", data: []), "DataStore")
-  }
-}
+const square_path_string = "{
+                      \"c\": true,
+                      \"i\": [
+                        [
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0
+                        ]
+                      ],
+                      \"o\": [
+                        [
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0
+                        ]
+                      ],
+                      \"v\": [
+                        [
+                          -400.0,
+                          400.0
+                        ],
+                        [
+                          400.0,
+                          400.0
+                        ],
+                        [
+                          400.0,
+                          -400.0
+                        ],
+                        [
+                          -400.0,
+                          -400.0
+                        ]
+                      ]
+                  }"
 
 pub fn main() -> Nil {
-  // echo decode.run(dynamic.int(0), integer_boolean_decoder())
-  // echo decode.run(dynamic.int(1), integer_boolean_decoder())
-  // echo decode.run(dynamic.int(2), integer_boolean_decoder())
+  // let assert Ok(raw) = simplifile.read("./priv/Basic_Comp.json")
+  // case json.parse(raw, animation_decoder()) {
+  //   Ok(animation) -> {
+  //     echo animation
+  //     io.println("")
+  //     element.to_readable_string(compile(animation, 0.0)) |> io.println
+  //     Nil
+  //   }
+  //   Error(e) -> {
+  //     echo e
+  //     Nil
+  //   }
+  // }
 
-  // echo decode.run(dynamic.string("#000000"), hex_color_decoder())
-  // echo decode.run(dynamic.string("#FFFFFF"), hex_color_decoder())
-  // echo decode.run(dynamic.string("#FF0000"), hex_color_decoder())
-  // echo decode.run(dynamic.string("#808080"), hex_color_decoder())
-  // echo json.parse(dummy.transform, transform_decoder())
-  // echo json.parse(opacity_property, scalar_property_decoder())
-  // echo json.parse(gradient_property, gradient_property_decoder())
-  // echo json.parse("20.0", decode.int)
-
-  // echo json.parse(example_data_store, data_store_decoder())
-  // echo json.parse(
-  //   example_dict,
-  //   decode.list(of: {
-  //     use ind <- decode.field("ind", decode.int)
-  //     use name <- decode.field("name", decode.string)
-  //     decode.success(#(ind, name))
-  //   })
-  //     |> decode.then(fn(objects) { decode.success(dict.from_list(objects)) }),
-  // )
-
-  // echo json.parse()
-
-  // let assert Ok(shape) = simplifile.read("./priv/animated_stroke_shape.json")
-  // echo json.parse(shape, shape_decoder())
-  // Nil
-  let assert Ok(raw) = simplifile.read("./priv/Basic_Comp.json")
-  case json.parse(raw, animation_decoder()) {
-    Ok(animation) -> {
-      echo animation
-      io.println("")
-      element.to_readable_string(compile(animation, 0.0)) |> io.println
-      Nil
-    }
-    Error(e) -> {
-      echo e
-      Nil
-    }
-  }
+  // let assert Ok(square) = json.parse(square_path_string, bezier_path_decoder())
+  // echo square
+  // echo bezier_path_to_attribute(square)
   // let animation = json.parse(raw, animation_decoder())
 
   // echo animation
 
   // echo compile(animation)
   // Nil
-  // let app = lustre.application(init:, update:, view:)
-  // let assert Ok(_) = lustre.start(app, onto: "#app", with: Nil)
+  let app = lustre.application(init:, update:, view:)
+  let assert Ok(_) = lustre.start(app, onto: "#app", with: Nil)
   Nil
 }
 
-pub type Model =
-  Nil
+pub type Model {
+  Model(animation: Option(Animation))
+}
 
-pub type Message =
-  Nil
+pub type Message {
+  ReturnedAnimation(Result(Animation, rsvp.Error(String)))
+}
 
 pub fn init(_args: Nil) -> #(Model, Effect(Message)) {
-  #(Nil, effect.none())
+  let fetch_animation =
+    rsvp.get(
+      // "/Basic_Comp.json",
+      "/Lottiefiles_Basic_Comp.json",
+      rsvp.expect_json(animation_decoder(), ReturnedAnimation),
+    )
+  #(Model(animation: option.None), fetch_animation)
 }
 
 pub fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
-  #(model, effect.none())
+  case message {
+    ReturnedAnimation(animation) ->
+      case animation {
+        Ok(animation) -> #(
+          Model(animation: option.Some(animation)),
+          effect.none(),
+        )
+        Error(_) -> #(model, effect.none())
+      }
+  }
 }
 
 pub fn view(model: Model) -> Element(Message) {
-  html.svg(
-    [
-      attribute.width(300),
-      attribute.height(300),
-    ],
-    [
-      svg.rect([
-        attribute.width(300),
-        attribute.height(300),
-        attribute.attribute("fill", "#0000ff"),
-      ]),
-    ],
-  )
+  case model.animation {
+    option.Some(animation) -> {
+      compile(animation, 0.0)
+    }
+    option.None -> element.none()
+  }
+  // html.svg(
+  //   [
+  //     attribute.width(300),
+  //     attribute.height(300),
+  //   ],
+  //   [
+  //     svg.rect([
+  //       attribute.width(300),
+  //       attribute.height(300),
+  //       attribute.attribute("fill", "#0000ff"),
+  //       attribute.attribute("fill", "#00ff00"),
+  //       attribute.attribute("fill", "#ff0000"),
+  //     ]),
+  //     // svg.path([
+  //   //   bezier_path_to_attribute(circle_path),
+  //   //   // attribute.attribute("fill", "#0000ff"),
+  //   //   attribute.attribute("fill", "none"),
+  //   //   attribute.attribute("stroke", "#0000ff"),
+  //   // ]),
+  //   ],
+  // )
 }
 
 pub fn compile(animation: Animation, time: Float) -> Element(Message) {
   html.svg(
     [attribute.width(animation.width), attribute.height(animation.height)],
-    list.map(animation.layers, fn(layer) {
-      compile_layer(layer, animation.index_to_layer, time)
-    }),
+    // the first element in lottie has the highest z-index
+    // the last element in svg has the highest z index
+    list.reverse(animation.layers)
+      |> list.map(fn(layer) {
+        compile_layer(layer, animation.index_to_layer, time)
+      }),
   )
 }
 
@@ -291,10 +306,12 @@ fn compile_layer(
         }
       }
 
+      //TODO: determine if im going to mandate that every layer have a parent
+      // because im pretty sure most lottie exporters force a top level parent that all layers inherit from
       case parent_transform {
         option.Some(parent_transform) ->
           compile_visual_layer(layer, parent_transform, time)
-        option.None -> element.none()
+        option.None -> compile_visual_layer(layer, identity_transform, time)
       }
     }
     DataLayer -> element.none()
@@ -310,7 +327,7 @@ fn compile_visual_layer(
   let child_affine = from_transform(layer.transform, time)
   let final_affine = affine.multiply(parent_affine, child_affine)
 
-  svg.g([affine.attribute(final_affine)], [
+  svg.g([affine.to_attribute(final_affine)], [
     case layer {
       NullLayer(..) -> element.none()
       ShapeLayer(
@@ -323,10 +340,10 @@ fn compile_visual_layer(
         transform:,
         elements:,
       ) ->
-        list.map(elements, fn(element) {
-          compile_graphic_element(element, time)
-        })
-        |> element.fragment
+      list.map(elements, fn(element) {
+        compile_graphic_element(element, time)
+      })
+      |> element.fragment
     },
   ])
 }
@@ -345,7 +362,6 @@ pub fn layer_decoder() -> Decoder(#(Option(Int), Layer)) {
   use out_point <- decode.field("op", decode.int)
   use start_time <- decode.field("st", decode.int)
 
-  // use index <- decode.field("ind", decode.int)
   use index <- field_option("ind", decode.int)
 
   use type_ <- decode.field("ty", decode.int)
@@ -464,13 +480,8 @@ pub fn base_layer_decoder() -> Decoder(BaseLayer) {
 pub type GraphicElement {
   Shape(Shape)
   Style(Style)
-  // TransformElement(transform: Transform)
-  Group(
-    name: Option(String),
-    hidden: Bool,
-    transform: Transform,
-    elements: List(GraphicElement),
-  )
+  TransformElement(transform: Transform)
+  Group(name: Option(String), hidden: Bool, elements: List(GraphicElement))
   UnknownElement(name: Option(String), type_: String)
 }
 
@@ -487,6 +498,7 @@ pub type Style {
     name: Option(String),
     hidden: Bool,
     fill_rule: FillRule,
+    opacity: Property(Float, Float),
     color: Property(Color, Float),
   )
 }
@@ -494,6 +506,13 @@ pub type Style {
 pub type FillRule {
   NonZero
   EvenOdd
+}
+
+fn fill_rule_attribute(fill_rule: FillRule) -> Attribute(Message) {
+  attribute.attribute("fill-rule", case fill_rule {
+    NonZero -> "nonzero"
+    EvenOdd -> "evenodd"
+  })
 }
 
 fn fill_rule_decoder() -> Decoder(FillRule) {
@@ -525,7 +544,7 @@ pub type Shape {
     name: Option(String),
     hidden: Bool,
     direction: ShapeDirection,
-    value: Property(BezierPath, Float),
+    path: Property(BezierPath, Float),
   )
 }
 
@@ -551,49 +570,304 @@ fn compile_graphic_element(
   time: Float,
 ) -> Element(Message) {
   case element {
-    Shape(shape) -> {
-      // let position = shape.position
-      todo
-    }
-    Style(_) -> todo
-    Group(name:, hidden:, transform:, elements:) -> {
-      // list.fold(elements, from:)
-      todo
-    }
-    UnknownElement(name:, type_:) -> todo
+    Group(name:, hidden:, elements:) -> compile_group_loop(elements, time)
+    _ -> element.none()
   }
 }
 
-//TODO: need to see if this can be isolated or if the return type should be changed
-// you cannot add attributes to an element after constructing it so maybe it would be better to return a list of attributes instead
+// [rect, circle, fill, ellipse, stroke, transform]
+// 
+fn compile_group_loop(
+  elements: List(GraphicElement),
+  time: Float,
+) -> Element(Message) {
+  // groups need to be evaluated bottom up
+  case list.reverse(elements) {
+    [TransformElement(transform:), ..elements] -> {
+      let #(children, _) =
+        list.fold(elements, from: #([], []), with: fn(acc, element) {
+          let #(children, styles) = acc
+          case element {
+            Shape(shape) -> {
+              let child = compile_shape(shape, styles, time)
+              #([child, ..children], styles)
+            }
+            Style(style) -> #(children, [style, ..styles])
+            TransformElement(transform:) -> acc
+            Group(name:, hidden:, elements:) -> {
+              //TODO: im pretty sure that the group needs to take in styles from its parent
+              // so should probably make compile_group_loop and pass styles down to that
+              let child = compile_group_loop(elements, time)
+              #([child, ..children], styles)
+            }
+            UnknownElement(name:, type_:) -> acc
+          }
+        })
+
+      svg.g([from_transform(transform, time) |> affine.to_attribute], children)
+    }
+    _ -> element.none()
+  }
+}
+
 // fn compile_shape(
 //   shape: Shape,
+//   styles: List(Style),
 //   time: Float,
-//   parent_transform: Transform,
 // ) -> Element(Message) {
+//   echo styles
+//   use <- bool.guard(shape.hidden, return: element.none())
+
+//   //TODO: see if i need to reverse this, it might be in the wrong order by default if i want to apply the styles in discovery order
+//   let style_attributes =
+//     list.reverse(styles)
+//     |> list.filter(fn(style) { !style.hidden })
+//     |> list.flat_map(fn(style) {
+//       case style {
+//         Stroke(name:, hidden:, opacity:, width:, color:) -> {
+//           let color = value_at_time(color, time, color_interpolator())
+//           let opacity = value_at_time(opacity, time, scalar_interpolator())
+//           let width = value_at_time(width, time, scalar_interpolator())
+//           [
+//             attribute.attribute("stroke", color_to_css(color)),
+//             attribute.attribute("stroke-opacity", float.to_string(opacity)),
+//             attribute.attribute("stroke-width", float.to_string(width)),
+//             // attribute.attribute("fill", "none"),
+//           ]
+//         }
+//         Fill(name:, hidden:, fill_rule:, opacity:, color:) -> {
+//           let color = value_at_time(color, time, color_interpolator())
+//           let opacity = value_at_time(opacity, time, scalar_interpolator())
+//           [
+//             attribute.attribute("fill", color_to_css(color)),
+//             attribute.attribute("fill-opacity", float.to_string(opacity)),
+//             fill_rule_attribute(fill_rule),
+//             // attribute.attribute("stroke", "none"),
+//           ]
+//         }
+//       }
+//     })
+
 //   case shape {
-//     Rectangle(name:, hidden:, position:, size:, roundness:) -> {
-//       case position {
-//         Split(x:, y:) -> todo
-//         Joint(_) -> todo
-//       }
-//       case size {
-//         Static(_) -> todo
-//         Animated(_) -> todo
-//       }
-//       svg.rect([
-//         // attribute.width(size)
-//       ])
+//     Rectangle(name:, hidden:, position:, size:, roundness:, direction:) -> {
+//       let position = position_at_time(position, time)
+//       let size = value_at_time(size, time, vector_interpolator())
+//       let roundness = value_at_time(roundness, time, scalar_interpolator())
+//       svg.rect(
+//         [
+//           // svg rectangles are positioned by their top-left corner, but lottie positions rectangles by
+//           // their center. so we offset by size / 2 to account for this.
+//           attribute.attribute("x", float.to_string(position.x -. size.x /. 2.0)),
+//           attribute.attribute("y", float.to_string(position.y -. size.y /. 2.0)),
+//           attribute.attribute("width", float.to_string(size.x)),
+//           attribute.attribute("height", float.to_string(size.y)),
+//           attribute.attribute("rx", float.to_string(roundness)),
+//           attribute.attribute("ry", float.to_string(roundness)),
+//         ]
+//         |> list.append(style_attributes),
+//       )
 //     }
-//     Ellipse(name:, hidden:, position:, size:) -> todo
+//     Ellipse(name:, hidden:, position:, size:, direction:) -> {
+//       let position = position_at_time(position, time)
+//       let size = value_at_time(size, time, vector_interpolator())
+//       svg.ellipse(
+//         [
+//           attribute.attribute("cx", float.to_string(position.x)),
+//           attribute.attribute("cy", float.to_string(position.y)),
+//           // radius is size / 2
+//           attribute.attribute("rx", float.to_string(size.x /. 2.0)),
+//           attribute.attribute("ry", float.to_string(size.y /. 2.0)),
+//         ]
+//         |> list.append(style_attributes),
+//       )
+//     }
+//     //TODO: need to set fill to none if using stroke
+//     Path(name:, hidden:, direction:, path:) -> {
+//       let path = value_at_time(path, time, path_interpolator())
+//       svg.path(
+//         [bezier_path_to_attribute(path)]
+//         |> list.append(style_attributes),
+//       )
+//     }
 //   }
 // }
 
-fn apply_style(style: Style, shape: Shape) -> Attribute(Message) {
-  todo
+// Approximation constant for a cubic bezier circle
+const k = 0.5522847498
+
+fn compile_shape(
+  shape: Shape,
+  styles: List(Style),
+  time: Float,
+) -> Element(Message) {
+  use <- bool.guard(shape.hidden, return: element.none())
+
+  let path = case shape {
+    Rectangle(name:, hidden:, direction:, position:, size:, roundness:) -> {
+      let position = position_at_time(position, time)
+      let size = value_at_time(size, time, vector_interpolator())
+      let roundness = value_at_time(roundness, time, scalar_interpolator())
+
+      let x_radius = size.x /. 2.0
+      let y_radius = size.y /. 2.0
+
+      let left = position.x -. x_radius
+      let top = position.y -. y_radius
+      let right = position.x +. x_radius
+      let bottom = position.y +. y_radius
+
+      let roundness = float.min(roundness, float.min(x_radius, y_radius))
+      let kr = k *. roundness
+
+      let top_left_start =
+        Vertex(
+          position: Vector(left, top +. roundness),
+          out_tangent: Vector(0.0, -1.0 *. kr),
+          in_tangent: Vector(0.0, 0.0),
+        )
+
+      let top_left_end =
+        Vertex(
+          position: Vector(left +. roundness, top),
+          out_tangent: Vector(0.0, 0.0),
+          in_tangent: Vector(-1.0 *. kr, 0.0),
+        )
+
+      let top_right_start =
+        Vertex(
+          position: Vector(right -. roundness, top),
+          out_tangent: Vector(kr, 0.0),
+          in_tangent: Vector(0.0, 0.0),
+        )
+
+      let top_right_end =
+        Vertex(
+          position: Vector(right, top +. roundness),
+          out_tangent: Vector(0.0, 0.0),
+          in_tangent: Vector(0.0, -1.0 *. kr),
+        )
+
+      let bottom_right_start =
+        Vertex(
+          position: Vector(right, bottom -. roundness),
+          out_tangent: Vector(0.0, kr),
+          in_tangent: Vector(0.0, 0.0),
+        )
+
+      let bottom_right_end =
+        Vertex(
+          position: Vector(right -. roundness, bottom),
+          out_tangent: Vector(0.0, 0.0),
+          in_tangent: Vector(kr, 0.0),
+        )
+
+      let bottom_left_start =
+        Vertex(
+          position: Vector(left +. roundness, bottom),
+          out_tangent: Vector(-1.0 *. kr, 0.0),
+          in_tangent: Vector(0.0, 0.0),
+        )
+
+      let bottom_left_end =
+        Vertex(
+          position: Vector(left, bottom -. roundness),
+          out_tangent: Vector(0.0, 0.0),
+          in_tangent: Vector(0.0, kr),
+        )
+
+      BezierPath(
+        closed: True,
+        first: top_left_start,
+        second: top_left_end,
+        rest: [
+          top_right_start,
+          top_right_end,
+          bottom_right_start,
+          bottom_right_end,
+          bottom_left_start,
+          bottom_left_end,
+        ],
+      )
+    }
+    Ellipse(name:, hidden:, direction:, position:, size:) -> {
+      let position = position_at_time(position, time)
+      let size = value_at_time(size, time, vector_interpolator())
+
+      let x_radius = size.x /. 2.0
+      let y_radius = size.y /. 2.0
+
+      let left =
+        Vertex(
+          position: Vector(position.x -. x_radius, position.y),
+          out_tangent: Vector(0.0, -1.0 *. k *. y_radius),
+          in_tangent: Vector(0.0, k *. y_radius),
+        )
+
+      let top =
+        Vertex(
+          position: Vector(position.x, position.y -. y_radius),
+          out_tangent: Vector(k *. x_radius, 0.0),
+          in_tangent: Vector(-1.0 *. k *. x_radius, 0.0),
+        )
+
+      let right =
+        Vertex(
+          position: Vector(position.x +. x_radius, position.y),
+          out_tangent: Vector(0.0, k *. y_radius),
+          in_tangent: Vector(0.0, -1.0 *. k *. y_radius),
+        )
+
+      let bottom =
+        Vertex(
+          position: Vector(position.x, position.y +. y_radius),
+          out_tangent: Vector(-1.0 *. k *. x_radius, 0.0),
+          in_tangent: Vector(k *. x_radius, 0.0),
+        )
+
+      BezierPath(closed: True, first: left, second: top, rest: [right, bottom])
+    }
+    Path(name:, hidden:, direction:, path:) -> {
+      value_at_time(path, time, path_interpolator())
+    }
+  }
+
+  // TODO: explain why each style gets its own path + geometry
+  // also explain why we reverse the styles
+  list.reverse(styles)
+  |> list.filter_map(fn(style) {
+    use <- bool.guard(style.hidden, return: Error(Nil))
+
+    let style_attributes = case style {
+      Stroke(name:, hidden:, opacity:, width:, color:) -> {
+        let color = value_at_time(color, time, color_interpolator())
+        let opacity = value_at_time(opacity, time, scalar_interpolator())
+        let width = value_at_time(width, time, scalar_interpolator())
+        [
+          attribute.attribute("stroke", color_to_css(color)),
+          attribute.attribute("stroke-opacity", float.to_string(opacity)),
+          attribute.attribute("stroke-width", float.to_string(width)),
+          attribute.attribute("fill", "none"),
+        ]
+      }
+      Fill(name:, hidden:, fill_rule:, opacity:, color:) -> {
+        let color = value_at_time(color, time, color_interpolator())
+        let opacity = value_at_time(opacity, time, scalar_interpolator())
+        [
+          attribute.attribute("fill", color_to_css(color)),
+          attribute.attribute("fill-opacity", float.to_string(opacity)),
+          fill_rule_attribute(fill_rule),
+          attribute.attribute("stroke", "none"),
+        ]
+      }
+    }
+
+    Ok(svg.path([bezier_path_to_attribute(path), ..style_attributes]))
+  })
+  |> element.fragment
 }
 
 fn graphic_element_decoder() -> Decoder(GraphicElement) {
+  //TODO: should probably consider an empty string as option.None
   use name <- field_option("nm", decode.string)
   use hidden <- decode.optional_field("hd", False, decode.bool)
 
@@ -631,7 +905,7 @@ fn graphic_element_decoder() -> Decoder(GraphicElement) {
         shape_direction_decoder(),
       )
       use value <- decode.field("ks", path_property_decoder())
-      Path(name:, hidden:, direction:, value:) |> Shape |> decode.success
+      Path(name:, hidden:, direction:, path: value) |> Shape |> decode.success
     }
 
     "st" -> {
@@ -644,56 +918,62 @@ fn graphic_element_decoder() -> Decoder(GraphicElement) {
     }
     "fl" -> {
       use fill_rule <- decode.optional_field("r", NonZero, fill_rule_decoder())
+      use opacity <- decode.field("o", scalar_property_decoder())
       use color <- decode.field("c", color_property_decoder())
-      Fill(name:, hidden:, fill_rule:, color:) |> Style |> decode.success
+      Fill(name:, hidden:, fill_rule:, opacity:, color:)
+      |> Style
+      |> decode.success
+    }
+    "tr" -> {
+      use transform <- decode.then(transform_decoder())
+      decode.success(TransformElement(transform:))
     }
 
     "gr" -> {
       use <- decode.recursive
-      use #(transform, elements) <- decode.field(
+      use elements <- decode.field(
         "it",
-        group_elements_decoder_loop(0, []),
+        decode.list(of: graphic_element_decoder()),
       )
-      Group(name:, hidden:, transform:, elements:) |> decode.success
+      // use #(transform, elements) <- decode.field(
+      //   "it",
+      //   group_elements_decoder_loop(0, []),
+      // )
+      Group(name:, hidden:, elements:) |> decode.success
     }
 
     type_ ->
+      //TODO: at some point this should be a success, but it's a failure rn for development purposes
+      // catching misssed types early
       decode.failure(UnknownElement(name:, type_:), expected: "GraphicElement")
   }
 }
 
-fn group_elements_decoder_loop(
-  index: Int,
-  elements: List(GraphicElement),
-) -> Decoder(#(Transform, List(GraphicElement))) {
-  use type_ <- decode.field(
-    index,
-    decode.field("ty", decode.string, decode.success),
-  )
+// fn group_elements_decoder_loop(
+//   index: Int,
+//   elements: List(GraphicElement),
+// ) -> Decoder(#(Transform, List(GraphicElement))) {
+//   use type_ <- decode.field(
+//     index,
+//     decode.field("ty", decode.string, decode.success),
+//   )
 
-  case type_ {
-    "tr" -> {
-      use transform <- decode.field(index, transform_decoder())
-      decode.success(#(transform, list.reverse(elements)))
-    }
-    _ -> {
-      use element <- decode.field(index, graphic_element_decoder())
-      group_elements_decoder_loop(index + 1, [element, ..elements])
-    }
-  }
-}
+//   case type_ {
+//     "tr" -> {
+//       use transform <- decode.field(index, transform_decoder())
+//       decode.success(#(transform, list.reverse(elements)))
+//     }
+//     _ -> {
+//       use element <- decode.field(index, graphic_element_decoder())
+//       group_elements_decoder_loop(index + 1, [element, ..elements])
+//     }
+//   }
+// }
 
 pub fn from_transform(transform: Transform, time: Float) -> Affine {
   let anchor_point =
     value_at_time(transform.anchor_point, time, vector_interpolator())
-  let position = case transform.position {
-    Split(x:, y:) -> {
-      let x = value_at_time(x, time, scalar_interpolator())
-      let y = value_at_time(y, time, scalar_interpolator())
-      Vector(x, y)
-    }
-    Joint(position) -> value_at_time(position, time, vector_interpolator())
-  }
+  let position = position_at_time(transform.position, time)
   let rotation = value_at_time(transform.rotation, time, scalar_interpolator())
   let scale = value_at_time(transform.scale, time, vector_interpolator())
   let skew = value_at_time(transform.skew, time, scalar_interpolator())
@@ -718,6 +998,17 @@ pub fn from_transform(transform: Transform, time: Float) -> Affine {
   |> affine.multiply(affine.translation(position.x, position.y), _)
 }
 
+fn position_at_time(position: Position, time: Float) -> Vector {
+  case position {
+    Split(x:, y:) -> {
+      let x = value_at_time(x, time, scalar_interpolator())
+      let y = value_at_time(y, time, scalar_interpolator())
+      Vector(x, y)
+    }
+    Joint(position) -> value_at_time(position, time, vector_interpolator())
+  }
+}
+
 pub type Transform {
   Transform(
     anchor_point: Property(Vector, Vector),
@@ -734,6 +1025,16 @@ pub type Position {
   Split(x: Property(Float, Float), y: Property(Float, Float))
   Joint(Property(Vector, Vector))
 }
+
+const identity_transform = Transform(
+  anchor_point: Static(Vector(0.0, 0.0)),
+  position: Joint(Static(Vector(0.0, 0.0))),
+  rotation: Static(0.0),
+  scale: Static(Vector(100.0, 100.0)),
+  opacity: Static(100.0),
+  skew: Static(0.0),
+  skew_axis: Static(0.0),
+)
 
 pub fn transform_decoder() -> Decoder(Transform) {
   use anchor_point <- decode.optional_field(
@@ -752,7 +1053,7 @@ pub fn transform_decoder() -> Decoder(Transform) {
     scalar_property_decoder(),
   )
   use scale <- decode.optional_field(
-    "o",
+    "s",
     Static(Vector(100.0, 100.0)),
     vector_property_decoder(),
   )
@@ -901,6 +1202,46 @@ pub fn color_interpolator() -> Interpolator(Color, Float) {
       Color(r:, g:, b:, a:)
     },
   )
+}
+
+//TODO: need to figure out how lerping works between paths of different vertex counts
+// on frame 1 the path could have 5 points and frame 30 the path has 10 points
+pub fn path_interpolator() -> Interpolator(BezierPath, Float) {
+  Interpolator(
+    ease: fn(x, out_tangent, in_tangent) {
+      let t = newton_raphson(x, out_tangent.x, in_tangent.x)
+      cubic_bezier(t, out_tangent.y, in_tangent.y)
+    },
+    lerp: fn(t, start: BezierPath, end: BezierPath) {
+      use <- bool.guard(start.closed != end.closed, return: end)
+
+      let first = vertex_lerp(t, start.first, end.first)
+      let second = vertex_lerp(t, start.second, end.second)
+      let rest = case list.strict_zip(start.rest, end.rest) {
+        Ok(vertex_pairs) ->
+          list.map(vertex_pairs, fn(pair) {
+            let #(start, end) = pair
+            vertex_lerp(t, start, end)
+          })
+        Error(Nil) -> end.rest
+      }
+
+      BezierPath(closed: end.closed, first:, second:, rest:)
+    },
+  )
+}
+
+fn vertex_lerp(t: Float, a: Vertex, b: Vertex) -> Vertex {
+  let position = vector_lerp(t, a.position, b.position)
+  let out_tangent = vector_lerp(t, a.out_tangent, b.out_tangent)
+  let in_tangent = vector_lerp(t, a.in_tangent, b.in_tangent)
+  Vertex(position:, out_tangent:, in_tangent:)
+}
+
+fn vector_lerp(t: Float, a: Vector, b: Vector) -> Vector {
+  let x = lerp(t, a.x, b.x)
+  let y = lerp(t, a.y, b.y)
+  Vector(x, y)
 }
 
 fn lerp(t: Float, a: Float, b: Float) -> Float {
@@ -1169,6 +1510,19 @@ pub type Color {
 
 const zero_color = Color(r: 0.0, g: 0.0, b: 0.0, a: 0.0)
 
+fn color_to_css(color: Color) -> String {
+  let Color(r:, g:, b:, a:) = color
+  "rgb("
+  <> float.to_string(r *. 255.0)
+  <> " "
+  <> float.to_string(g *. 255.0)
+  <> " "
+  <> float.to_string(b *. 255.0)
+  <> " / "
+  <> float.to_string(a)
+  <> ")"
+}
+
 // pub fn color_decoder() -> Decoder(Color) {
 //   use value <- decode.then(decode.list(of: normalized_decoder()))
 
@@ -1326,6 +1680,12 @@ pub type Vector {
   Vector(x: Float, y: Float)
 }
 
+const zero_vector = Vector(x: 0.0, y: 0.0)
+
+fn vector_add(a: Vector, b: Vector) -> Vector {
+  Vector(a.x +. b.x, a.y +. b.y)
+}
+
 pub fn vector_decoder() -> Decoder(Vector) {
   let full_vector_decoder = {
     use x <- decode.field(0, decode.float)
@@ -1375,53 +1735,121 @@ pub fn normalized_vector_decoder() -> Decoder(Vector) {
 }
 
 pub type BezierPath {
-  BezierPath(closed: Bool, vertices: List(Vertex))
+  //TODO: split vertices into a n > 1 list
+  BezierPath(closed: Bool, first: Vertex, second: Vertex, rest: List(Vertex))
+  // BezierPath(closed: Bool, vertices: List(Vertex))
 }
 
-const zero_bezier_path = BezierPath(closed: False, vertices: [])
+// const zero_bezier_path = BezierPath(closed: False, vertices: [])
+const zero_bezier_path = BezierPath(
+  closed: False,
+  first: zero_vertex,
+  second: zero_vertex,
+  rest: [],
+)
 
 //TODO: rename point to position
 pub type Vertex {
-  Vertex(position: Vector, in_tangent: Vector, out_tangent: Vector)
+  Vertex(position: Vector, out_tangent: Vector, in_tangent: Vector)
+}
+
+const zero_vertex = Vertex(
+  position: zero_vector,
+  out_tangent: zero_vector,
+  in_tangent: zero_vector,
+)
+
+fn bezier_path_to_attribute(path: BezierPath) -> Attribute(Message) {
+  let value =
+    "M " <> vector_to_svg(path.first.position) <> curve(path.first, path.second)
+
+  let #(last, value) =
+    list.fold(path.rest, from: #(path.second, value), with: fn(acc, end) {
+      let #(start, value) = acc
+
+      let segment = curve(start, end)
+      #(end, value <> segment)
+    })
+
+  let value = case path.closed {
+    True -> value <> curve(last, path.first) <> " Z"
+    False -> value
+  }
+
+  attribute.attribute("d", value)
+  // case path.vertices {
+  //   // a path needs at least 2 vertices
+  //   [first, second, ..vertices] -> {
+  //     let value = "M " <> vector_to_svg(first.position) <> curve(first, second)
+
+  //     let #(last, value) =
+  //       list.fold(vertices, from: #(second, value), with: fn(acc, end) {
+  //         let #(start, value) = acc
+
+  //         let segment = curve(start, end)
+  //         #(end, value <> segment)
+  //       })
+
+  //     let value = case path.closed {
+  //       True -> value <> curve(last, first) <> " Z"
+  //       False -> value
+  //     }
+
+  //     attribute.attribute("d", value)
+  //   }
+  //   _ -> attribute.none()
+  // }
+}
+
+fn curve(start: Vertex, end: Vertex) -> String {
+  " C "
+  <> vector_to_svg(start.out_tangent |> vector_add(start.position))
+  <> ", "
+  <> vector_to_svg(end.in_tangent |> vector_add(end.position))
+  <> ", "
+  <> vector_to_svg(end.position)
+}
+
+fn vector_to_svg(vector: Vector) -> String {
+  float.to_string(vector.x) <> " " <> float.to_string(vector.y)
 }
 
 pub fn bezier_path_decoder() -> Decoder(BezierPath) {
   use closed <- decode.optional_field("c", False, decode.bool)
   use positions <- decode.field("v", decode.list(of: vector_decoder()))
-  use in_tangents <- decode.field("i", decode.list(of: vector_decoder()))
   use out_tangents <- decode.field("o", decode.list(of: vector_decoder()))
+  use in_tangents <- decode.field("i", decode.list(of: vector_decoder()))
 
   let path = {
     use vertices <- result.try(
-      build_vertices_loop(positions, in_tangents, out_tangents, []),
+      build_vertices_loop(positions, out_tangents, in_tangents, []),
     )
-    Ok(BezierPath(closed:, vertices:))
+    case vertices {
+      [first, second, ..rest] -> Ok(BezierPath(closed:, first:, second:, rest:))
+      _ -> Error(Nil)
+    }
   }
 
   case path {
     Ok(path) -> decode.success(path)
-    Error(Nil) ->
-      decode.failure(
-        BezierPath(closed: False, vertices: []),
-        expected: "BezierPath",
-      )
+    Error(Nil) -> decode.failure(zero_bezier_path, expected: "BezierPath")
   }
 }
 
 fn build_vertices_loop(
   positions: List(Vector),
-  in_tangents: List(Vector),
   out_tangents: List(Vector),
+  in_tangents: List(Vector),
   vertices: List(Vertex),
 ) -> Result(List(Vertex), Nil) {
-  case positions, in_tangents, out_tangents {
+  case positions, out_tangents, in_tangents {
     [], [], [] -> Ok(list.reverse(vertices))
     [position, ..positions],
-      [in_tangent, ..in_tangents],
-      [out_tangent, ..out_tangents]
+      [out_tangent, ..out_tangents],
+      [in_tangent, ..in_tangents]
     -> {
-      let vertex = Vertex(position:, in_tangent:, out_tangent:)
-      build_vertices_loop(positions, in_tangents, out_tangents, [
+      let vertex = Vertex(position:, out_tangent:, in_tangent:)
+      build_vertices_loop(positions, out_tangents, in_tangents, [
         vertex,
         ..vertices
       ])
