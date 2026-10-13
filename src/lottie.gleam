@@ -1,4 +1,3 @@
-import dummy
 import glam/doc
 import gleam/bool
 import gleam/deque.{type Deque}
@@ -169,7 +168,10 @@ pub fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
           Model(animation: option.Some(animation)),
           effect.none(),
         )
-        Error(_) -> #(model, effect.none())
+        Error(e) -> {
+          echo e
+          #(model, effect.none())
+        }
       }
   }
 }
@@ -323,29 +325,80 @@ fn compile_visual_layer(
   parent_transform: Transform,
   time: Float,
 ) -> Element(Message) {
-  let parent_affine = from_transform(parent_transform, time)
-  let child_affine = from_transform(layer.transform, time)
+  let #(parent_affine, _) = from_transform(parent_transform, time)
+  let #(child_affine, opacity) = from_transform(layer.transform, time)
   let final_affine = affine.multiply(parent_affine, child_affine)
 
-  svg.g([affine.to_attribute(final_affine)], [
-    case layer {
-      NullLayer(..) -> element.none()
-      ShapeLayer(
-        hidden:,
-        parent_index:,
-        time_stretch:,
-        in_point:,
-        out_point:,
-        start_time:,
-        transform:,
-        elements:,
-      ) ->
-      list.map(elements, fn(element) {
-        compile_graphic_element(element, time)
-      })
-      |> element.fragment
-    },
-  ])
+  svg.g(
+    [
+      affine.to_attribute(final_affine),
+      attribute.attribute("opacity", float.to_string(opacity)),
+    ],
+    [
+      case layer {
+        NullLayer(..) -> element.none()
+        ShapeLayer(
+          hidden:,
+          parent_index:,
+          time_stretch:,
+          in_point:,
+          out_point:,
+          start_time:,
+          transform:,
+          elements:,
+        ) -> list.reverse(elements) |> compile_graphic_elements_loop([], time)
+      },
+    ],
+  )
+}
+
+fn compile_graphic_elements_loop(
+  elements: List(GraphicElement),
+  styles: List(Style),
+  time: Float,
+) -> Element(Message) {
+  let #(nodes, _) =
+    list.fold(elements, from: #([], styles), with: fn(acc, element) {
+      let #(nodes, styles) = acc
+
+      case element {
+        Shape(shape) -> {
+          let node = compile_shape(shape, styles, time)
+          #([node, ..nodes], styles)
+        }
+        Style(style) -> #(nodes, [style, ..styles])
+        Group(name:, hidden: False, elements:) -> {
+          let node = list.reverse(elements) |> compile_group_loop(styles, time)
+          #([node, ..nodes], styles)
+        }
+        Group(hidden: True, ..) -> acc
+        TransformElement(transform:) -> acc
+        UnknownElement(name:, type_:) -> acc
+      }
+    })
+
+  element.fragment(nodes)
+}
+
+fn compile_group_loop(
+  elements: List(GraphicElement),
+  styles: List(Style),
+  time: Float,
+) -> Element(Message) {
+  case elements {
+    [TransformElement(transform:), ..elements] -> {
+      let children = compile_graphic_elements_loop(elements, styles, time)
+      let #(affine, opacity) = from_transform(transform, time)
+      svg.g(
+        [
+          affine.to_attribute(affine),
+          attribute.attribute("opacity", float.to_string(opacity)),
+        ],
+        [children],
+      )
+    }
+    _ -> element.none()
+  }
 }
 
 pub fn layer_decoder() -> Decoder(#(Option(Int), Layer)) {
@@ -406,22 +459,6 @@ pub fn layer_decoder() -> Decoder(#(Option(Int), Layer)) {
     _ -> decode.failure(#(option.None, DataLayer), expected: "Layer")
   }
 }
-
-// pub fn layer_decoder() -> Decoder(Layer) {
-//   use base <- decode.then(base_layer_decoder())
-//   use type_ <- decode.field("ty", decode.int)
-//   case type_ {
-//     3 -> {
-//       use transform <- decode.field("ks", transform_decoder())
-//       decode.success(NullLayer(base:, transform:))
-//     }
-//     4 -> {
-//       use transform <- decode.field("ks", transform_decoder())
-//       decode.success(ShapeLayer(base:, transform:))
-//     }
-//     _ -> decode.failure(UnsupportedLayer, expected: "Layer")
-//   }
-// }
 
 pub type BaseLayer {
   BaseLayer(
@@ -531,7 +568,7 @@ pub type Shape {
     direction: ShapeDirection,
     position: Position,
     size: Property(Vector, Vector),
-    roundness: Property(Float, Float),
+    corner_radius: Property(Float, Float),
   )
   Ellipse(
     name: Option(String),
@@ -539,6 +576,29 @@ pub type Shape {
     direction: ShapeDirection,
     position: Position,
     size: Property(Vector, Vector),
+  )
+  Polystar(
+    name: Option(String),
+    hidden: Bool,
+    direction: ShapeDirection,
+    position: Position,
+    rotation: Property(Float, Float),
+    //TODO: prob make this an int alongside an `int_scalar_property_decoder`
+    point_count: Property(Float, Float),
+    outer_radius: Property(Float, Float),
+    outer_roundness: Property(Float, Float),
+    inner_radius: Property(Float, Float),
+    inner_roundness: Property(Float, Float),
+  )
+  RegularPolygon(
+    name: Option(String),
+    hidden: Bool,
+    direction: ShapeDirection,
+    position: Position,
+    rotation: Property(Float, Float),
+    point_count: Property(Float, Float),
+    radius: Property(Float, Float),
+    roundness: Property(Float, Float),
   )
   Path(
     name: Option(String),
@@ -564,135 +624,7 @@ fn shape_direction_decoder() -> Decoder(ShapeDirection) {
   }
 }
 
-// if you have [rect, circle, fill, ellipse, stroke, transform]
-fn compile_graphic_element(
-  element: GraphicElement,
-  time: Float,
-) -> Element(Message) {
-  case element {
-    Group(name:, hidden:, elements:) -> compile_group_loop(elements, time)
-    _ -> element.none()
-  }
-}
-
-// [rect, circle, fill, ellipse, stroke, transform]
-// 
-fn compile_group_loop(
-  elements: List(GraphicElement),
-  time: Float,
-) -> Element(Message) {
-  // groups need to be evaluated bottom up
-  case list.reverse(elements) {
-    [TransformElement(transform:), ..elements] -> {
-      let #(children, _) =
-        list.fold(elements, from: #([], []), with: fn(acc, element) {
-          let #(children, styles) = acc
-          case element {
-            Shape(shape) -> {
-              let child = compile_shape(shape, styles, time)
-              #([child, ..children], styles)
-            }
-            Style(style) -> #(children, [style, ..styles])
-            TransformElement(transform:) -> acc
-            Group(name:, hidden:, elements:) -> {
-              //TODO: im pretty sure that the group needs to take in styles from its parent
-              // so should probably make compile_group_loop and pass styles down to that
-              let child = compile_group_loop(elements, time)
-              #([child, ..children], styles)
-            }
-            UnknownElement(name:, type_:) -> acc
-          }
-        })
-
-      svg.g([from_transform(transform, time) |> affine.to_attribute], children)
-    }
-    _ -> element.none()
-  }
-}
-
-// fn compile_shape(
-//   shape: Shape,
-//   styles: List(Style),
-//   time: Float,
-// ) -> Element(Message) {
-//   echo styles
-//   use <- bool.guard(shape.hidden, return: element.none())
-
-//   //TODO: see if i need to reverse this, it might be in the wrong order by default if i want to apply the styles in discovery order
-//   let style_attributes =
-//     list.reverse(styles)
-//     |> list.filter(fn(style) { !style.hidden })
-//     |> list.flat_map(fn(style) {
-//       case style {
-//         Stroke(name:, hidden:, opacity:, width:, color:) -> {
-//           let color = value_at_time(color, time, color_interpolator())
-//           let opacity = value_at_time(opacity, time, scalar_interpolator())
-//           let width = value_at_time(width, time, scalar_interpolator())
-//           [
-//             attribute.attribute("stroke", color_to_css(color)),
-//             attribute.attribute("stroke-opacity", float.to_string(opacity)),
-//             attribute.attribute("stroke-width", float.to_string(width)),
-//             // attribute.attribute("fill", "none"),
-//           ]
-//         }
-//         Fill(name:, hidden:, fill_rule:, opacity:, color:) -> {
-//           let color = value_at_time(color, time, color_interpolator())
-//           let opacity = value_at_time(opacity, time, scalar_interpolator())
-//           [
-//             attribute.attribute("fill", color_to_css(color)),
-//             attribute.attribute("fill-opacity", float.to_string(opacity)),
-//             fill_rule_attribute(fill_rule),
-//             // attribute.attribute("stroke", "none"),
-//           ]
-//         }
-//       }
-//     })
-
-//   case shape {
-//     Rectangle(name:, hidden:, position:, size:, roundness:, direction:) -> {
-//       let position = position_at_time(position, time)
-//       let size = value_at_time(size, time, vector_interpolator())
-//       let roundness = value_at_time(roundness, time, scalar_interpolator())
-//       svg.rect(
-//         [
-//           // svg rectangles are positioned by their top-left corner, but lottie positions rectangles by
-//           // their center. so we offset by size / 2 to account for this.
-//           attribute.attribute("x", float.to_string(position.x -. size.x /. 2.0)),
-//           attribute.attribute("y", float.to_string(position.y -. size.y /. 2.0)),
-//           attribute.attribute("width", float.to_string(size.x)),
-//           attribute.attribute("height", float.to_string(size.y)),
-//           attribute.attribute("rx", float.to_string(roundness)),
-//           attribute.attribute("ry", float.to_string(roundness)),
-//         ]
-//         |> list.append(style_attributes),
-//       )
-//     }
-//     Ellipse(name:, hidden:, position:, size:, direction:) -> {
-//       let position = position_at_time(position, time)
-//       let size = value_at_time(size, time, vector_interpolator())
-//       svg.ellipse(
-//         [
-//           attribute.attribute("cx", float.to_string(position.x)),
-//           attribute.attribute("cy", float.to_string(position.y)),
-//           // radius is size / 2
-//           attribute.attribute("rx", float.to_string(size.x /. 2.0)),
-//           attribute.attribute("ry", float.to_string(size.y /. 2.0)),
-//         ]
-//         |> list.append(style_attributes),
-//       )
-//     }
-//     //TODO: need to set fill to none if using stroke
-//     Path(name:, hidden:, direction:, path:) -> {
-//       let path = value_at_time(path, time, path_interpolator())
-//       svg.path(
-//         [bezier_path_to_attribute(path)]
-//         |> list.append(style_attributes),
-//       )
-//     }
-//   }
-// }
-
-// Approximation constant for a cubic bezier circle
+// control point handle length as a fraction of the radius for approximating a quarter-circle arc
 const k = 0.5522847498
 
 fn compile_shape(
@@ -703,10 +635,11 @@ fn compile_shape(
   use <- bool.guard(shape.hidden, return: element.none())
 
   let path = case shape {
-    Rectangle(name:, hidden:, direction:, position:, size:, roundness:) -> {
+    Rectangle(name:, hidden:, direction:, position:, size:, corner_radius:) -> {
       let position = position_at_time(position, time)
       let size = value_at_time(size, time, vector_interpolator())
-      let roundness = value_at_time(roundness, time, scalar_interpolator())
+      let corner_radius =
+        value_at_time(corner_radius, time, scalar_interpolator())
 
       let x_radius = size.x /. 2.0
       let y_radius = size.y /. 2.0
@@ -716,61 +649,62 @@ fn compile_shape(
       let right = position.x +. x_radius
       let bottom = position.y +. y_radius
 
-      let roundness = float.min(roundness, float.min(x_radius, y_radius))
-      let kr = k *. roundness
+      let corner_radius =
+        float.min(corner_radius, float.min(x_radius, y_radius))
+      let kr = k *. corner_radius
 
       let top_left_start =
         Vertex(
-          position: Vector(left, top +. roundness),
+          position: Vector(left, top +. corner_radius),
           out_tangent: Vector(0.0, -1.0 *. kr),
           in_tangent: Vector(0.0, 0.0),
         )
 
       let top_left_end =
         Vertex(
-          position: Vector(left +. roundness, top),
+          position: Vector(left +. corner_radius, top),
           out_tangent: Vector(0.0, 0.0),
           in_tangent: Vector(-1.0 *. kr, 0.0),
         )
 
       let top_right_start =
         Vertex(
-          position: Vector(right -. roundness, top),
+          position: Vector(right -. corner_radius, top),
           out_tangent: Vector(kr, 0.0),
           in_tangent: Vector(0.0, 0.0),
         )
 
       let top_right_end =
         Vertex(
-          position: Vector(right, top +. roundness),
+          position: Vector(right, top +. corner_radius),
           out_tangent: Vector(0.0, 0.0),
           in_tangent: Vector(0.0, -1.0 *. kr),
         )
 
       let bottom_right_start =
         Vertex(
-          position: Vector(right, bottom -. roundness),
+          position: Vector(right, bottom -. corner_radius),
           out_tangent: Vector(0.0, kr),
           in_tangent: Vector(0.0, 0.0),
         )
 
       let bottom_right_end =
         Vertex(
-          position: Vector(right -. roundness, bottom),
+          position: Vector(right -. corner_radius, bottom),
           out_tangent: Vector(0.0, 0.0),
           in_tangent: Vector(kr, 0.0),
         )
 
       let bottom_left_start =
         Vertex(
-          position: Vector(left +. roundness, bottom),
+          position: Vector(left +. corner_radius, bottom),
           out_tangent: Vector(-1.0 *. kr, 0.0),
           in_tangent: Vector(0.0, 0.0),
         )
 
       let bottom_left_end =
         Vertex(
-          position: Vector(left, bottom -. roundness),
+          position: Vector(left, bottom -. corner_radius),
           out_tangent: Vector(0.0, 0.0),
           in_tangent: Vector(0.0, kr),
         )
@@ -826,6 +760,123 @@ fn compile_shape(
 
       BezierPath(closed: True, first: left, second: top, rest: [right, bottom])
     }
+    Polystar(
+      name:,
+      hidden:,
+      direction:,
+      position:,
+      rotation:,
+      point_count:,
+      outer_radius:,
+      outer_roundness:,
+      inner_radius:,
+      inner_roundness:,
+    ) -> {
+      let position = position_at_time(position, time)
+      let rotation = rotation_at_time(rotation, time)
+      let point_count =
+        value_at_time(point_count, time, scalar_interpolator())
+        |> float.truncate
+      let outer_radius =
+        value_at_time(outer_radius, time, scalar_interpolator())
+      let outer_roundness =
+        value_at_time(outer_roundness, time, scalar_interpolator()) /. 100.0
+      let inner_radius =
+        value_at_time(inner_radius, time, scalar_interpolator())
+      let inner_roundness =
+        value_at_time(inner_roundness, time, scalar_interpolator()) /. 100.0
+
+      let angle_step = { 2.0 *. math.pi() } /. int.to_float(point_count)
+
+      let outer_tangent_length =
+        polygon_roundness_tangent_length(
+          radius: outer_radius,
+          roundness: outer_roundness,
+          point_count:,
+        )
+
+      let inner_tangent_length =
+        polygon_roundness_tangent_length(
+          radius: inner_radius,
+          roundness: inner_roundness,
+          point_count:,
+        )
+
+      let vertices =
+        int.range(from: 0, to: point_count, with: [], run: fn(vertices, i) {
+          let outer_angle =
+            { int.to_float(i) *. angle_step }
+            -. { math.pi() /. 2.0 }
+            +. rotation
+
+          let outer_vertex =
+            vertex_on_circle(
+              center: position,
+              radius: outer_radius,
+              angle: outer_angle,
+              tangent_length: outer_tangent_length,
+            )
+
+          // half step phase shift, one of the key geometric properties of a star
+          let inner_angle = outer_angle +. { angle_step /. 2.0 }
+          let inner_vertex =
+            vertex_on_circle(
+              center: position,
+              radius: inner_radius,
+              angle: inner_angle,
+              tangent_length: inner_tangent_length,
+            )
+
+          [inner_vertex, outer_vertex, ..vertices]
+        })
+        |> list.reverse
+
+      //TODO: replace assert with early return
+      let assert [first, second, ..rest] = vertices
+      BezierPath(closed: True, first:, second:, rest:)
+    }
+    RegularPolygon(
+      name:,
+      hidden:,
+      direction:,
+      position:,
+      rotation:,
+      point_count:,
+      radius:,
+      roundness:,
+    ) -> {
+      let position = position_at_time(position, time)
+      let rotation = rotation_at_time(rotation, time)
+      let radius = value_at_time(radius, time, scalar_interpolator())
+      let roundness = roundness_at_time(roundness, time)
+      //TODO: figure out how to early exit if point count is less than 3
+      let point_count =
+        value_at_time(point_count, time, scalar_interpolator())
+        |> float.truncate
+
+      let angle_step = { 2.0 *. math.pi() } /. int.to_float(point_count)
+
+      let tangent_length =
+        polygon_roundness_tangent_length(radius:, roundness:, point_count:)
+
+      let vertices =
+        int.range(from: 0, to: point_count, with: [], run: fn(vertices, i) {
+          let angle =
+            { int.to_float(i) *. angle_step }
+            -. { math.pi() /. 2.0 }
+            +. rotation
+
+          let vertex =
+            vertex_on_circle(center: position, radius:, angle:, tangent_length:)
+
+          [vertex, ..vertices]
+        })
+        |> list.reverse
+
+      //TODO: replace assert with early return
+      let assert [first, second, ..rest] = vertices
+      BezierPath(closed: True, first:, second:, rest:)
+    }
     Path(name:, hidden:, direction:, path:) -> {
       value_at_time(path, time, path_interpolator())
     }
@@ -866,6 +917,41 @@ fn compile_shape(
   |> element.fragment
 }
 
+/// Approximation formula taken from the docs
+fn polygon_roundness_tangent_length(
+  radius radius: Float,
+  roundness roundness: Float,
+  point_count point_count: Int,
+) -> Float {
+  case point_count {
+    point_count if point_count >= 3 -> {
+      let arc_length = 2.0 *. math.pi() *. radius /. int.to_float(point_count)
+      arc_length /. 4.0 *. roundness
+    }
+    _ -> 0.0
+  }
+}
+
+/// A vertex on a circle at `angle`, with handles tangent to the
+/// circle and `tangent_length` long in each direction.
+fn vertex_on_circle(
+  center center: Vector,
+  radius radius: Float,
+  angle angle: Float,
+  tangent_length tangent_length: Float,
+) -> Vertex {
+  let direction = Vector(math.cos(angle), math.sin(angle))
+
+  let position = vector_multiply(direction, radius) |> vector_add(center)
+  let normal = vector_normal(direction)
+
+  Vertex(
+    position:,
+    out_tangent: vector_multiply(normal, tangent_length),
+    in_tangent: vector_multiply(normal, -1.0 *. tangent_length),
+  )
+}
+
 fn graphic_element_decoder() -> Decoder(GraphicElement) {
   //TODO: should probably consider an empty string as option.None
   use name <- field_option("nm", decode.string)
@@ -893,10 +979,60 @@ fn graphic_element_decoder() -> Decoder(GraphicElement) {
       )
       use position <- decode.field("p", position_decoder())
       use size <- decode.field("s", vector_property_decoder())
-      use roundness <- decode.field("r", scalar_property_decoder())
-      Rectangle(name:, hidden:, direction:, position:, size:, roundness:)
+      use corner_radius <- decode.field("r", scalar_property_decoder())
+      Rectangle(name:, hidden:, direction:, position:, size:, corner_radius:)
       |> Shape
       |> decode.success
+    }
+    "sr" -> {
+      use direction <- decode.optional_field(
+        "d",
+        Normal,
+        shape_direction_decoder(),
+      )
+
+      use position <- decode.field("p", position_decoder())
+      use rotation <- decode.field("r", scalar_property_decoder())
+      use point_count <- decode.field("pt", scalar_property_decoder())
+      use outer_radius <- decode.field("or", scalar_property_decoder())
+      use outer_roundness <- decode.field("os", scalar_property_decoder())
+      use star_type <- decode.optional_field("sy", 1, decode.int)
+
+      case star_type {
+        1 -> {
+          use inner_radius <- decode.field("ir", scalar_property_decoder())
+          use inner_roundness <- decode.field("is", scalar_property_decoder())
+          Polystar(
+            name:,
+            hidden:,
+            direction:,
+            position:,
+            rotation:,
+            point_count:,
+            outer_radius:,
+            outer_roundness:,
+            inner_radius:,
+            inner_roundness:,
+          )
+          |> Shape
+          |> decode.success
+        }
+        2 -> {
+          RegularPolygon(
+            name:,
+            hidden:,
+            direction:,
+            position:,
+            rotation:,
+            point_count:,
+            radius: outer_radius,
+            roundness: outer_roundness,
+          )
+          |> Shape
+          |> decode.success
+        }
+        _ -> decode.success(UnknownElement(name:, type_:))
+      }
     }
     "sh" -> {
       use direction <- decode.optional_field(
@@ -935,10 +1071,6 @@ fn graphic_element_decoder() -> Decoder(GraphicElement) {
         "it",
         decode.list(of: graphic_element_decoder()),
       )
-      // use #(transform, elements) <- decode.field(
-      //   "it",
-      //   group_elements_decoder_loop(0, []),
-      // )
       Group(name:, hidden:, elements:) |> decode.success
     }
 
@@ -970,7 +1102,7 @@ fn graphic_element_decoder() -> Decoder(GraphicElement) {
 //   }
 // }
 
-pub fn from_transform(transform: Transform, time: Float) -> Affine {
+pub fn from_transform(transform: Transform, time: Float) -> #(Affine, Float) {
   let anchor_point =
     value_at_time(transform.anchor_point, time, vector_interpolator())
   let position = position_at_time(transform.position, time)
@@ -980,22 +1112,28 @@ pub fn from_transform(transform: Transform, time: Float) -> Affine {
   let skew_axis =
     value_at_time(transform.skew_axis, time, scalar_interpolator())
 
-  affine.translation(-1.0 *. anchor_point.x, -1.0 *. anchor_point.y)
-  |> affine.multiply(affine.scaling(scale.x /. 100.0, scale.y /. 100.0), _)
-  |> fn(aff) {
-    case skew {
-      0.0 -> aff
-      skew -> {
-        let #(skew, skew_axis) = #(
-          math.to_radians(skew),
-          math.to_radians(skew_axis),
-        )
-        affine.multiply(affine.skew(skew, skew_axis), aff)
+  let affine =
+    affine.translation(-1.0 *. anchor_point.x, -1.0 *. anchor_point.y)
+    |> affine.multiply(affine.scaling(scale.x /. 100.0, scale.y /. 100.0), _)
+    |> fn(aff) {
+      case skew {
+        0.0 -> aff
+        skew -> {
+          let skew = math.to_radians(skew)
+          // Lottie conjugates the skew with the axis in the opposite direction
+          // from the usual convention, so the axis is negated here.
+          let skew_axis = -1.0 *. math.to_radians(skew_axis)
+
+          affine.multiply(affine.skew(skew, skew_axis), aff)
+        }
       }
     }
-  }
-  |> affine.multiply(affine.rotation(math.to_radians(rotation)), _)
-  |> affine.multiply(affine.translation(position.x, position.y), _)
+    |> affine.multiply(affine.rotation(math.to_radians(rotation)), _)
+    |> affine.multiply(affine.translation(position.x, position.y), _)
+
+  let opacity =
+    value_at_time(transform.opacity, time, scalar_interpolator()) /. 100.0
+  #(affine, opacity)
 }
 
 fn position_at_time(position: Position, time: Float) -> Vector {
@@ -1007,6 +1145,22 @@ fn position_at_time(position: Position, time: Float) -> Vector {
     }
     Joint(position) -> value_at_time(position, time, vector_interpolator())
   }
+}
+
+/// Lottie stores all rotational values in degrees
+fn rotation_at_time(rotation: Property(Float, Float), time: Float) -> Float {
+  value_at_time(rotation, time, scalar_interpolator()) |> math.to_radians
+}
+
+/// Lottie stores roundness as a percentage, with 100 being full roundness
+fn roundness_at_time(roundness: Property(Float, Float), time: Float) -> Float {
+  value_at_time(roundness, time, scalar_interpolator()) /. 100.0
+}
+
+//TODO: use this
+/// Lottie stores scale as a percentage, with 100 representing 1x scale
+fn scale_at_time(scale: Property(Vector, Vector), time: Float) -> Vector {
+  value_at_time(scale, time, vector_interpolator()) |> vector_divide(by: 100.0)
 }
 
 pub type Transform {
@@ -1682,8 +1836,26 @@ pub type Vector {
 
 const zero_vector = Vector(x: 0.0, y: 0.0)
 
+fn vector_multiply(a: Vector, by s: Float) -> Vector {
+  Vector(a.x *. s, a.y *. s)
+}
+
 fn vector_add(a: Vector, b: Vector) -> Vector {
   Vector(a.x +. b.x, a.y +. b.y)
+}
+
+fn vector_divide(a: Vector, by s: Float) -> Vector {
+  Vector(a.x /. s, a.y /. s)
+}
+
+fn vector_midpoint(a: Vector, b: Vector) -> Vector {
+  let x = { a.x +. b.x } /. 2.0
+  let y = { a.y +. b.y } /. 2.0
+  Vector(x, y)
+}
+
+fn vector_normal(a: Vector) -> Vector {
+  Vector(-1.0 *. a.y, a.x)
 }
 
 pub fn vector_decoder() -> Decoder(Vector) {
