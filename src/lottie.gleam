@@ -143,11 +143,13 @@ pub fn main() -> Nil {
 }
 
 pub type Model {
-  Model(animation: Option(Animation))
+  Loading
+  Loaded(animation: Animation, time: Float)
 }
 
 pub type Message {
   ReturnedAnimation(Result(Animation, rsvp.Error(String)))
+  Ticked(dt: Float)
 }
 
 pub fn init(_args: Nil) -> #(Model, Effect(Message)) {
@@ -157,63 +159,49 @@ pub fn init(_args: Nil) -> #(Model, Effect(Message)) {
       "/Lottiefiles_Basic_Comp.json",
       rsvp.expect_json(animation_decoder(), ReturnedAnimation),
     )
-  #(Model(animation: option.None), fetch_animation)
+  #(Loading, fetch_animation)
 }
 
 pub fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
-  case message {
-    ReturnedAnimation(animation) ->
+  case model, message {
+    Loading, ReturnedAnimation(animation) ->
       case animation {
-        Ok(animation) -> #(
-          Model(animation: option.Some(animation)),
-          effect.none(),
-        )
+        Ok(animation) -> #(Loaded(animation:, time: 0.0), runtime.start(Ticked))
         Error(e) -> {
           echo e
           #(model, effect.none())
         }
       }
-  }
-}
-
-pub fn view(model: Model) -> Element(Message) {
-  case model.animation {
-    option.Some(animation) -> {
-      compile(animation, 0.0)
+    Loaded(animation:, time:), Ticked(dt:) -> {
+      let model = Loaded(animation:, time: time +. dt)
+      #(model, effect.none())
     }
-    option.None -> element.none()
+    model, _ -> #(model, effect.none())
   }
-  // html.svg(
-  //   [
-  //     attribute.width(300),
-  //     attribute.height(300),
-  //   ],
-  //   [
-  //     svg.rect([
-  //       attribute.width(300),
-  //       attribute.height(300),
-  //       attribute.attribute("fill", "#0000ff"),
-  //       attribute.attribute("fill", "#00ff00"),
-  //       attribute.attribute("fill", "#ff0000"),
-  //     ]),
-  //     // svg.path([
-  //   //   bezier_path_to_attribute(circle_path),
-  //   //   // attribute.attribute("fill", "#0000ff"),
-  //   //   attribute.attribute("fill", "none"),
-  //   //   attribute.attribute("stroke", "#0000ff"),
-  //   // ]),
-  //   ],
-  // )
 }
 
-pub fn compile(animation: Animation, time: Float) -> Element(Message) {
+//TODO: should probably do all of this compilation logic in update
+// the main reason being so that i can cache previous frames on the model for looping animations
+
+//also need to look into caching static subtrees, not really sure how that would work
+pub fn view(model: Model) -> Element(Message) {
+  case model {
+    Loading -> element.none()
+    Loaded(animation:, time:) -> {
+      let frame = time *. animation.fps
+      compile(animation, frame)
+    }
+  }
+}
+
+pub fn compile(animation: Animation, frame: Float) -> Element(Message) {
   html.svg(
     [attribute.width(animation.width), attribute.height(animation.height)],
     // the first element in lottie has the highest z-index
     // the last element in svg has the highest z index
     list.reverse(animation.layers)
       |> list.map(fn(layer) {
-        compile_layer(layer, animation.index_to_layer, time)
+        compile_layer(layer, animation.index_to_layer, frame)
       }),
   )
 }
@@ -292,7 +280,7 @@ pub type VisualLayer {
 fn compile_layer(
   layer: Layer,
   index_to_layer: Dict(Int, Layer),
-  time: Float,
+  frame: Float,
 ) -> Element(Message) {
   case layer {
     VisualLayer(layer) -> {
@@ -312,8 +300,8 @@ fn compile_layer(
       // because im pretty sure most lottie exporters force a top level parent that all layers inherit from
       case parent_transform {
         option.Some(parent_transform) ->
-          compile_visual_layer(layer, parent_transform, time)
-        option.None -> compile_visual_layer(layer, identity_transform, time)
+          compile_visual_layer(layer, parent_transform, frame)
+        option.None -> compile_visual_layer(layer, identity_transform, frame)
       }
     }
     DataLayer -> element.none()
@@ -323,10 +311,10 @@ fn compile_layer(
 fn compile_visual_layer(
   layer: VisualLayer,
   parent_transform: Transform,
-  time: Float,
+  frame: Float,
 ) -> Element(Message) {
-  let #(parent_affine, _) = from_transform(parent_transform, time)
-  let #(child_affine, opacity) = from_transform(layer.transform, time)
+  let #(parent_affine, _) = from_transform(parent_transform, frame)
+  let #(child_affine, opacity) = from_transform(layer.transform, frame)
   let final_affine = affine.multiply(parent_affine, child_affine)
 
   svg.g(
@@ -346,7 +334,7 @@ fn compile_visual_layer(
           start_time:,
           transform:,
           elements:,
-        ) -> list.reverse(elements) |> compile_graphic_elements_loop([], time)
+        ) -> list.reverse(elements) |> compile_graphic_elements_loop([], frame)
       },
     ],
   )
@@ -355,7 +343,7 @@ fn compile_visual_layer(
 fn compile_graphic_elements_loop(
   elements: List(GraphicElement),
   styles: List(Style),
-  time: Float,
+  frame: Float,
 ) -> Element(Message) {
   let #(nodes, _) =
     list.fold(elements, from: #([], styles), with: fn(acc, element) {
@@ -363,12 +351,12 @@ fn compile_graphic_elements_loop(
 
       case element {
         Shape(shape) -> {
-          let node = compile_shape(shape, styles, time)
+          let node = compile_shape(shape, styles, frame)
           #([node, ..nodes], styles)
         }
         Style(style) -> #(nodes, [style, ..styles])
         Group(name:, hidden: False, elements:) -> {
-          let node = list.reverse(elements) |> compile_group_loop(styles, time)
+          let node = list.reverse(elements) |> compile_group_loop(styles, frame)
           #([node, ..nodes], styles)
         }
         Group(hidden: True, ..) -> acc
@@ -383,12 +371,12 @@ fn compile_graphic_elements_loop(
 fn compile_group_loop(
   elements: List(GraphicElement),
   styles: List(Style),
-  time: Float,
+  frame: Float,
 ) -> Element(Message) {
   case elements {
     [TransformElement(transform:), ..elements] -> {
-      let children = compile_graphic_elements_loop(elements, styles, time)
-      let #(affine, opacity) = from_transform(transform, time)
+      let children = compile_graphic_elements_loop(elements, styles, frame)
+      let #(affine, opacity) = from_transform(transform, frame)
       svg.g(
         [
           affine.to_attribute(affine),
@@ -630,16 +618,16 @@ const k = 0.5522847498
 fn compile_shape(
   shape: Shape,
   styles: List(Style),
-  time: Float,
+  frame: Float,
 ) -> Element(Message) {
   use <- bool.guard(shape.hidden, return: element.none())
 
   let path = case shape {
     Rectangle(name:, hidden:, direction:, position:, size:, corner_radius:) -> {
-      let position = position_at_time(position, time)
-      let size = value_at_time(size, time, vector_interpolator())
+      let position = position_at_frame(position, frame)
+      let size = value_at_frame(size, frame, vector_interpolator())
       let corner_radius =
-        value_at_time(corner_radius, time, scalar_interpolator())
+        value_at_frame(corner_radius, frame, scalar_interpolator())
 
       let x_radius = size.x /. 2.0
       let y_radius = size.y /. 2.0
@@ -724,8 +712,8 @@ fn compile_shape(
       )
     }
     Ellipse(name:, hidden:, direction:, position:, size:) -> {
-      let position = position_at_time(position, time)
-      let size = value_at_time(size, time, vector_interpolator())
+      let position = position_at_frame(position, frame)
+      let size = value_at_frame(size, frame, vector_interpolator())
 
       let x_radius = size.x /. 2.0
       let y_radius = size.y /. 2.0
@@ -772,19 +760,19 @@ fn compile_shape(
       inner_radius:,
       inner_roundness:,
     ) -> {
-      let position = position_at_time(position, time)
-      let rotation = rotation_at_time(rotation, time)
+      let position = position_at_frame(position, frame)
+      let rotation = rotation_at_frame(rotation, frame)
       let point_count =
-        value_at_time(point_count, time, scalar_interpolator())
+        value_at_frame(point_count, frame, scalar_interpolator())
         |> float.truncate
       let outer_radius =
-        value_at_time(outer_radius, time, scalar_interpolator())
+        value_at_frame(outer_radius, frame, scalar_interpolator())
       let outer_roundness =
-        value_at_time(outer_roundness, time, scalar_interpolator()) /. 100.0
+        value_at_frame(outer_roundness, frame, scalar_interpolator()) /. 100.0
       let inner_radius =
-        value_at_time(inner_radius, time, scalar_interpolator())
+        value_at_frame(inner_radius, frame, scalar_interpolator())
       let inner_roundness =
-        value_at_time(inner_roundness, time, scalar_interpolator()) /. 100.0
+        value_at_frame(inner_roundness, frame, scalar_interpolator()) /. 100.0
 
       let angle_step = { 2.0 *. math.pi() } /. int.to_float(point_count)
 
@@ -845,13 +833,13 @@ fn compile_shape(
       radius:,
       roundness:,
     ) -> {
-      let position = position_at_time(position, time)
-      let rotation = rotation_at_time(rotation, time)
-      let radius = value_at_time(radius, time, scalar_interpolator())
-      let roundness = roundness_at_time(roundness, time)
+      let position = position_at_frame(position, frame)
+      let rotation = rotation_at_frame(rotation, frame)
+      let radius = value_at_frame(radius, frame, scalar_interpolator())
+      let roundness = roundness_at_frame(roundness, frame)
       //TODO: figure out how to early exit if point count is less than 3
       let point_count =
-        value_at_time(point_count, time, scalar_interpolator())
+        value_at_frame(point_count, frame, scalar_interpolator())
         |> float.truncate
 
       let angle_step = { 2.0 *. math.pi() } /. int.to_float(point_count)
@@ -878,7 +866,7 @@ fn compile_shape(
       BezierPath(closed: True, first:, second:, rest:)
     }
     Path(name:, hidden:, direction:, path:) -> {
-      value_at_time(path, time, path_interpolator())
+      value_at_frame(path, frame, path_interpolator())
     }
   }
 
@@ -890,9 +878,9 @@ fn compile_shape(
 
     let style_attributes = case style {
       Stroke(name:, hidden:, opacity:, width:, color:) -> {
-        let color = value_at_time(color, time, color_interpolator())
-        let opacity = value_at_time(opacity, time, scalar_interpolator())
-        let width = value_at_time(width, time, scalar_interpolator())
+        let color = value_at_frame(color, frame, color_interpolator())
+        let opacity = value_at_frame(opacity, frame, scalar_interpolator())
+        let width = value_at_frame(width, frame, scalar_interpolator())
         [
           attribute.attribute("stroke", color_to_css(color)),
           attribute.attribute("stroke-opacity", float.to_string(opacity)),
@@ -901,8 +889,8 @@ fn compile_shape(
         ]
       }
       Fill(name:, hidden:, fill_rule:, opacity:, color:) -> {
-        let color = value_at_time(color, time, color_interpolator())
-        let opacity = value_at_time(opacity, time, scalar_interpolator())
+        let color = value_at_frame(color, frame, color_interpolator())
+        let opacity = value_at_frame(opacity, frame, scalar_interpolator())
         [
           attribute.attribute("fill", color_to_css(color)),
           attribute.attribute("fill-opacity", float.to_string(opacity)),
@@ -1102,15 +1090,16 @@ fn graphic_element_decoder() -> Decoder(GraphicElement) {
 //   }
 // }
 
-pub fn from_transform(transform: Transform, time: Float) -> #(Affine, Float) {
+pub fn from_transform(transform: Transform, frame: Float) -> #(Affine, Float) {
   let anchor_point =
-    value_at_time(transform.anchor_point, time, vector_interpolator())
-  let position = position_at_time(transform.position, time)
-  let rotation = value_at_time(transform.rotation, time, scalar_interpolator())
-  let scale = value_at_time(transform.scale, time, vector_interpolator())
-  let skew = value_at_time(transform.skew, time, scalar_interpolator())
+    value_at_frame(transform.anchor_point, frame, vector_interpolator())
+  let position = position_at_frame(transform.position, frame)
+  let rotation =
+    value_at_frame(transform.rotation, frame, scalar_interpolator())
+  let scale = value_at_frame(transform.scale, frame, vector_interpolator())
+  let skew = value_at_frame(transform.skew, frame, scalar_interpolator())
   let skew_axis =
-    value_at_time(transform.skew_axis, time, scalar_interpolator())
+    value_at_frame(transform.skew_axis, frame, scalar_interpolator())
 
   let affine =
     affine.translation(-1.0 *. anchor_point.x, -1.0 *. anchor_point.y)
@@ -1132,35 +1121,39 @@ pub fn from_transform(transform: Transform, time: Float) -> #(Affine, Float) {
     |> affine.multiply(affine.translation(position.x, position.y), _)
 
   let opacity =
-    value_at_time(transform.opacity, time, scalar_interpolator()) /. 100.0
+    value_at_frame(transform.opacity, frame, scalar_interpolator()) /. 100.0
   #(affine, opacity)
 }
 
-fn position_at_time(position: Position, time: Float) -> Vector {
+fn position_at_frame(position: Position, frame: Float) -> Vector {
   case position {
     Split(x:, y:) -> {
-      let x = value_at_time(x, time, scalar_interpolator())
-      let y = value_at_time(y, time, scalar_interpolator())
+      let x = value_at_frame(x, frame, scalar_interpolator())
+      let y = value_at_frame(y, frame, scalar_interpolator())
       Vector(x, y)
     }
-    Joint(position) -> value_at_time(position, time, vector_interpolator())
+    Joint(position) -> value_at_frame(position, frame, vector_interpolator())
   }
 }
 
 /// Lottie stores all rotational values in degrees
-fn rotation_at_time(rotation: Property(Float, Float), time: Float) -> Float {
-  value_at_time(rotation, time, scalar_interpolator()) |> math.to_radians
+fn rotation_at_frame(rotation: Property(Float, Float), frame: Float) -> Float {
+  value_at_frame(rotation, frame, scalar_interpolator()) |> math.to_radians
 }
 
 /// Lottie stores roundness as a percentage, with 100 being full roundness
-fn roundness_at_time(roundness: Property(Float, Float), time: Float) -> Float {
-  value_at_time(roundness, time, scalar_interpolator()) /. 100.0
+fn roundness_at_frame(
+  roundness: Property(Float, Float),
+  frame: Float,
+) -> Float {
+  value_at_frame(roundness, frame, scalar_interpolator()) /. 100.0
 }
 
 //TODO: use this
 /// Lottie stores scale as a percentage, with 100 representing 1x scale
-fn scale_at_time(scale: Property(Vector, Vector), time: Float) -> Vector {
-  value_at_time(scale, time, vector_interpolator()) |> vector_divide(by: 100.0)
+fn scale_at_frame(scale: Property(Vector, Vector), frame: Float) -> Vector {
+  value_at_frame(scale, frame, vector_interpolator())
+  |> vector_divide(by: 100.0)
 }
 
 pub type Transform {
@@ -1271,39 +1264,39 @@ pub type Interpolator(value, easing) {
   )
 }
 
-pub fn value_at_time(
+pub fn value_at_frame(
   property: Property(value, easing),
-  time: Float,
+  frame: Float,
   interpolator: Interpolator(value, easing),
 ) -> value {
   case property {
     Static(value) -> value
     Animated(first:, rest:) ->
-      find_value_at_time_loop(first, rest, time, interpolator)
+      find_value_at_frame_loop(first, rest, frame, interpolator)
   }
 }
 
-fn find_value_at_time_loop(
+fn find_value_at_frame_loop(
   start: Keyframe(value, easing),
   rest: List(Keyframe(value, easing)),
-  time: Float,
+  frame: Float,
   interpolator: Interpolator(value, easing),
 ) -> value {
-  use <- bool.guard(start.frame >=. time, return: start.value)
+  use <- bool.guard(start.frame >=. frame, return: start.value)
 
   case rest {
     [end, ..rest] ->
-      case end.frame >. time {
+      case end.frame >. frame {
         True -> {
           use <- bool.guard(start.hold, return: start.value)
 
-          let x = { time -. start.frame } /. { end.frame -. start.frame }
-          let y = interpolator.ease(x, start.out_tangent, end.in_tangent)
+          let x = { frame -. start.frame } /. { end.frame -. start.frame }
+          let y = interpolator.ease(x, start.out_tangent, start.in_tangent)
 
           let value = interpolator.lerp(y, start.value, end.value)
           value
         }
-        False -> find_value_at_time_loop(end, rest, time, interpolator)
+        False -> find_value_at_frame_loop(end, rest, frame, interpolator)
       }
     [] -> start.value
   }
@@ -1599,7 +1592,7 @@ pub type Easing(shape) {
 }
 
 pub fn scalar_easing_decoder() -> Decoder(Easing(Float)) {
-  use x <- decode.field("x", normalized_decoder())
+  use x <- decode.field("x", scalar_decoder())
   // "Unlike x values, y values are not clamped to [0 .. 1]. Supernormal y values allow the interpolated value
   // to overshoot (extrapolate) beyond the specified keyframe values range."
   use y <- decode.field("y", scalar_decoder())
@@ -1607,22 +1600,9 @@ pub fn scalar_easing_decoder() -> Decoder(Easing(Float)) {
 }
 
 pub fn vector_easing_decoder() -> Decoder(Easing(Vector)) {
-  use x <- decode.field("x", normalized_vector_decoder())
+  use x <- decode.field("x", vector_decoder())
   use y <- decode.field("y", vector_decoder())
   decode.success(Easing(x:, y:))
-}
-
-fn normalized_decoder() -> Decoder(Float) {
-  use value <- decode.then(scalar_decoder())
-  case value {
-    value if value <. 0.0 -> decode.success(0.0)
-    value if value >. 1.0 -> decode.success(1.0)
-    value -> decode.success(value)
-  }
-  // case value {
-  //   value if value >=. 0.0 && value <=. 1.0 -> decode.success(value)
-  //   _ -> decode.failure(0.0, expected: "0-1 Float")
-  // }
 }
 
 fn scalar_decoder() -> Decoder(Float) {
@@ -1638,25 +1618,6 @@ pub fn integer_boolean_decoder() -> Decoder(Bool) {
     _ -> decode.failure(False, expected: "Bool")
   }
 }
-
-// pub type Normalized {
-//   Normalized(value: Float)
-// }
-
-// pub fn from_float(value: Float) -> Result(Normalized, Nil) {
-//   case value {
-//     value if value >=. 0.0 && value <=. 1.0 -> Ok(Normalized(value:))
-//     _ -> Error(Nil)
-//   }
-// }
-
-// fn normalized_decoder() -> Decoder(Normalized) {
-//   use value <- decode.then(decode.float)
-//   case value {
-//     value if value >=. 0.0 && value <=. 1.0 -> decode.success(Normalized(value:))
-//     _ -> decode.failure(Normalized(0.0), expected: "0-1 Float")
-//   }
-// }
 
 pub type Color {
   Color(r: Float, g: Float, b: Float, a: Float)
@@ -1690,10 +1651,10 @@ fn color_to_css(color: Color) -> String {
 // }
 
 pub fn color_decoder() -> Decoder(Color) {
-  use r <- decode.field(0, normalized_decoder())
-  use g <- decode.field(1, normalized_decoder())
-  use b <- decode.field(2, normalized_decoder())
-  use a <- decode.optional_field(3, 1.0, normalized_decoder())
+  use r <- decode.field(0, scalar_decoder())
+  use g <- decode.field(1, scalar_decoder())
+  use b <- decode.field(2, scalar_decoder())
+  use a <- decode.optional_field(3, 1.0, scalar_decoder())
   decode.success(Color(r:, g:, b:, a:))
 }
 
@@ -1707,7 +1668,7 @@ pub type Gradient {
 const zero_gradient = Gradient(color_stops: [], transparency_stops: [])
 
 pub fn gradient_decoder(color_stop_count: Int) -> Decoder(Gradient) {
-  use data <- decode.then(decode.list(of: normalized_decoder()))
+  use data <- decode.then(decode.list(of: scalar_decoder()))
   let transparency_stop_count = { list.length(data) - 4 * color_stop_count } / 2
 
   let gradient = {
@@ -1872,31 +1833,6 @@ pub fn vector_decoder() -> Decoder(Vector) {
 
   let scalar_decoder = {
     use value <- decode.then(decode.float)
-    decode.success(Vector(x: value, y: value))
-  }
-
-  decode.one_of(full_vector_decoder, [
-    single_element_array_decoder,
-    scalar_decoder,
-  ])
-}
-
-//TODO: if i want this to be tolerant i probably shouldnt do any normalized decoding at all
-// just at compilation time if i see something that needs to be normalized i clamp it 0-1
-pub fn normalized_vector_decoder() -> Decoder(Vector) {
-  let full_vector_decoder = {
-    use x <- decode.field(0, normalized_decoder())
-    use y <- decode.field(1, normalized_decoder())
-    decode.success(Vector(x:, y:))
-  }
-
-  let single_element_array_decoder = {
-    use x <- decode.field(0, normalized_decoder())
-    decode.success(Vector(x:, y: x))
-  }
-
-  let scalar_decoder = {
-    use value <- decode.then(normalized_decoder())
     decode.success(Vector(x: value, y: value))
   }
 

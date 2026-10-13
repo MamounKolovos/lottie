@@ -165,9 +165,9 @@ pub fn value_at_time_test() {
   let interpolator = lottie.scalar_interpolator()
 
   //TODO:
-  assert lottie.value_at_time(property, 0.0, interpolator) == 0.0
-  assert lottie.value_at_time(property, 10.0, interpolator) == 0.0
-  assert lottie.value_at_time(property, 30.0, interpolator) == 0.0
-  assert lottie.value_at_time(property, 45.0, interpolator) == 180.0
-  assert lottie.value_at_time(property, 60.0, interpolator) == 360.0
+  assert lottie.value_at_frame(property, 0.0, interpolator) == 0.0
+  assert lottie.value_at_frame(property, 10.0, interpolator) == 0.0
+  assert lottie.value_at_frame(property, 30.0, interpolator) == 0.0
+  assert lottie.value_at_frame(property, 45.0, interpolator) == 180.0
+  assert lottie.value_at_frame(property, 60.0, interpolator) == 360.0
 }
