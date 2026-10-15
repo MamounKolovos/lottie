@@ -144,7 +144,21 @@ pub fn main() -> Nil {
 
 pub type Model {
   Loading
-  Loaded(animation: Animation, time: Float)
+  Loaded(animation: Animation, playback: Playback, current_frame: Float)
+}
+
+pub type Playback {
+  Playback(state: PlaybackState, mode: PlaybackMode)
+}
+
+pub type PlaybackState {
+  Playing
+  Paused
+}
+
+pub type PlaybackMode {
+  Loop
+  Once(done: Bool)
 }
 
 pub type Message {
@@ -157,6 +171,7 @@ pub fn init(_args: Nil) -> #(Model, Effect(Message)) {
     rsvp.get(
       // "/Basic_Comp.json",
       "/Lottiefiles_Basic_Comp.json",
+      // "/trophy.json",
       rsvp.expect_json(animation_decoder(), ReturnedAnimation),
     )
   #(Loading, fetch_animation)
@@ -166,30 +181,65 @@ pub fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
   case model, message {
     Loading, ReturnedAnimation(animation) ->
       case animation {
-        Ok(animation) -> #(Loaded(animation:, time: 0.0), runtime.start(Ticked))
+        Ok(animation) -> #(
+          Loaded(
+            animation:,
+            playback: Playback(state: Playing, mode: Loop),
+            current_frame: animation.in_point,
+          ),
+          runtime.start(Ticked),
+        )
         Error(e) -> {
           echo e
           #(model, effect.none())
         }
       }
-    Loaded(animation:, time:), Ticked(dt:) -> {
-      let model = Loaded(animation:, time: time +. dt)
-      #(model, effect.none())
+    Loaded(animation:, playback:, current_frame:), Ticked(dt:) -> {
+      case playback {
+        Playback(state: Paused, ..) -> #(model, effect.none())
+        Playback(mode: Once(done: True), ..) -> #(model, effect.none())
+        Playback(state: Playing, mode: Once(done: False)) -> {
+          let next_frame = current_frame +. { dt *. animation.fps }
+          case next_frame >=. animation.out_point {
+            True -> {
+              let playback = Playback(..playback, mode: Once(done: True))
+              let model =
+                Loaded(..model, playback:, current_frame: animation.out_point)
+              #(model, effect.none())
+            }
+            False -> {
+              let model = Loaded(..model, current_frame: next_frame)
+              #(model, effect.none())
+            }
+          }
+        }
+        Playback(state: Playing, mode: Loop) -> {
+          let next_frame = current_frame +. { dt *. animation.fps }
+          case next_frame >=. animation.out_point {
+            True -> {
+              let next_frame =
+                animation.in_point +. { next_frame -. animation.out_point }
+              let model = Loaded(..model, current_frame: next_frame)
+              #(model, effect.none())
+            }
+            False -> {
+              let model = Loaded(..model, current_frame: next_frame)
+              #(model, effect.none())
+            }
+          }
+        }
+      }
     }
     model, _ -> #(model, effect.none())
   }
 }
 
-//TODO: should probably do all of this compilation logic in update
-// the main reason being so that i can cache previous frames on the model for looping animations
-
 //also need to look into caching static subtrees, not really sure how that would work
 pub fn view(model: Model) -> Element(Message) {
   case model {
     Loading -> element.none()
-    Loaded(animation:, time:) -> {
-      let frame = time *. animation.fps
-      compile(animation, frame)
+    Loaded(animation:, current_frame:, ..) -> {
+      compile(animation, current_frame)
     }
   }
 }
