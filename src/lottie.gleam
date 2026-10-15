@@ -25,94 +25,6 @@ import rsvp
 
 // import simplifile
 
-const circle_path = BezierPath(
-  closed: True,
-  // Right
-  first: Vertex(
-    position: Vector(200.0, 100.0),
-    in_tangent: Vector(0.0, -55.228475),
-    out_tangent: Vector(0.0, 55.228475),
-  ),
-  // Bottom
-  second: Vertex(
-    position: Vector(100.0, 200.0),
-    in_tangent: Vector(55.228475, 0.0),
-    out_tangent: Vector(-55.228475, 0.0),
-  ),
-  rest: [
-    // Left
-    Vertex(
-      position: Vector(0.0, 100.0),
-      in_tangent: Vector(0.0, 55.228475),
-      out_tangent: Vector(0.0, -55.228475),
-    ),
-    // Top
-    Vertex(
-      position: Vector(100.0, 0.0),
-      in_tangent: Vector(-55.228475, 0.0),
-      out_tangent: Vector(55.228475, 0.0),
-    ),
-  ],
-)
-
-const square_path_string = "{
-                      \"c\": true,
-                      \"i\": [
-                        [
-                          0.0,
-                          0.0
-                        ],
-                        [
-                          0.0,
-                          0.0
-                        ],
-                        [
-                          0.0,
-                          0.0
-                        ],
-                        [
-                          0.0,
-                          0.0
-                        ]
-                      ],
-                      \"o\": [
-                        [
-                          0.0,
-                          0.0
-                        ],
-                        [
-                          0.0,
-                          0.0
-                        ],
-                        [
-                          0.0,
-                          0.0
-                        ],
-                        [
-                          0.0,
-                          0.0
-                        ]
-                      ],
-                      \"v\": [
-                        [
-                          -400.0,
-                          400.0
-                        ],
-                        [
-                          400.0,
-                          400.0
-                        ],
-                        [
-                          400.0,
-                          -400.0
-                        ],
-                        [
-                          -400.0,
-                          -400.0
-                        ]
-                      ]
-                  }"
-
 pub fn main() -> Nil {
   // let assert Ok(raw) = simplifile.read("./priv/Basic_Comp.json")
   // case json.parse(raw, animation_decoder()) {
@@ -642,7 +554,7 @@ pub type Shape {
     name: Option(String),
     hidden: Bool,
     direction: ShapeDirection,
-    path: Property(BezierPath, Float),
+    path: Property(Path, Float),
   )
 }
 
@@ -747,12 +659,11 @@ fn compile_shape(
           in_tangent: Vector(0.0, kr),
         )
 
-      BezierPath(
-        closed: True,
+      ClosedPath(
         first: top_left_start,
         second: top_left_end,
+        third: top_right_start,
         rest: [
-          top_right_start,
           top_right_end,
           bottom_right_start,
           bottom_right_end,
@@ -796,7 +707,7 @@ fn compile_shape(
           in_tangent: Vector(k *. x_radius, 0.0),
         )
 
-      BezierPath(closed: True, first: left, second: top, rest: [right, bottom])
+      ClosedPath(first: left, second: top, third: right, rest: [bottom])
     }
     Polystar(
       name:,
@@ -870,8 +781,8 @@ fn compile_shape(
         |> list.reverse
 
       //TODO: replace assert with early return
-      let assert [first, second, ..rest] = vertices
-      BezierPath(closed: True, first:, second:, rest:)
+      let assert [first, second, third, ..rest] = vertices
+      ClosedPath(first:, second:, third:, rest:)
     }
     RegularPolygon(
       name:,
@@ -912,8 +823,8 @@ fn compile_shape(
         |> list.reverse
 
       //TODO: replace assert with early return
-      let assert [first, second, ..rest] = vertices
-      BezierPath(closed: True, first:, second:, rest:)
+      let assert [first, second, third, ..rest] = vertices
+      ClosedPath(first:, second:, third:, rest:)
     }
     Path(name:, hidden:, direction:, path:) -> {
       value_at_frame(path, frame, path_interpolator())
@@ -1401,29 +1312,43 @@ pub fn color_interpolator() -> Interpolator(Color, Float) {
   )
 }
 
-//TODO: need to figure out how lerping works between paths of different vertex counts
-// on frame 1 the path could have 5 points and frame 30 the path has 10 points
-pub fn path_interpolator() -> Interpolator(BezierPath, Float) {
+pub fn path_interpolator() -> Interpolator(Path, Float) {
   Interpolator(
     ease: fn(x, out_tangent, in_tangent) {
       let t = newton_raphson(x, out_tangent.x, in_tangent.x)
       cubic_bezier(t, out_tangent.y, in_tangent.y)
     },
-    lerp: fn(t, start: BezierPath, end: BezierPath) {
-      use <- bool.guard(start.closed != end.closed, return: end)
-
-      let first = vertex_lerp(t, start.first, end.first)
-      let second = vertex_lerp(t, start.second, end.second)
-      let rest = case list.strict_zip(start.rest, end.rest) {
-        Ok(vertex_pairs) ->
-          list.map(vertex_pairs, fn(pair) {
-            let #(start, end) = pair
-            vertex_lerp(t, start, end)
-          })
-        Error(Nil) -> end.rest
+    lerp: fn(t, start: Path, end: Path) {
+      case start, end {
+        OpenPath(..), OpenPath(..) -> {
+          let first = vertex_lerp(t, start.first, end.first)
+          let second = vertex_lerp(t, start.second, end.second)
+          let rest = case list.strict_zip(start.rest, end.rest) {
+            Ok(vertex_pairs) ->
+              list.map(vertex_pairs, fn(pair) {
+                let #(start, end) = pair
+                vertex_lerp(t, start, end)
+              })
+            Error(Nil) -> end.rest
+          }
+          OpenPath(first:, second:, rest:)
+        }
+        ClosedPath(..), ClosedPath(..) -> {
+          let first = vertex_lerp(t, start.first, end.first)
+          let second = vertex_lerp(t, start.second, end.second)
+          let third = vertex_lerp(t, start.third, end.third)
+          let rest = case list.strict_zip(start.rest, end.rest) {
+            Ok(vertex_pairs) ->
+              list.map(vertex_pairs, fn(pair) {
+                let #(start, end) = pair
+                vertex_lerp(t, start, end)
+              })
+            Error(Nil) -> end.rest
+          }
+          ClosedPath(first:, second:, third:, rest:)
+        }
+        _, _ -> end
       }
-
-      BezierPath(closed: end.closed, first:, second:, rest:)
     },
   )
 }
@@ -1561,7 +1486,7 @@ pub fn color_property_decoder() -> Decoder(Property(Color, Float)) {
   )
 }
 
-pub fn path_property_decoder() -> Decoder(Property(BezierPath, Float)) {
+pub fn path_property_decoder() -> Decoder(Property(Path, Float)) {
   property_decoder(
     bezier_path_decoder(),
     scalar_easing_decoder(),
@@ -1892,15 +1817,15 @@ pub fn vector_decoder() -> Decoder(Vector) {
   ])
 }
 
-pub type BezierPath {
-  //TODO: split vertices into a n > 1 list
-  BezierPath(closed: Bool, first: Vertex, second: Vertex, rest: List(Vertex))
-  // BezierPath(closed: Bool, vertices: List(Vertex))
+pub type Path {
+  /// An open path needs at least 2 vertices to be considered valid.
+  OpenPath(first: Vertex, second: Vertex, rest: List(Vertex))
+  /// A closed path needs at least 3 vertices to be considered valid.
+  ClosedPath(first: Vertex, second: Vertex, third: Vertex, rest: List(Vertex))
 }
 
 // const zero_bezier_path = BezierPath(closed: False, vertices: [])
-const zero_bezier_path = BezierPath(
-  closed: False,
+const zero_bezier_path = OpenPath(
   first: zero_vertex,
   second: zero_vertex,
   rest: [],
@@ -1917,46 +1842,41 @@ const zero_vertex = Vertex(
   in_tangent: zero_vector,
 )
 
-fn bezier_path_to_attribute(path: BezierPath) -> Attribute(Message) {
-  let value =
-    "M " <> vector_to_svg(path.first.position) <> curve(path.first, path.second)
+fn bezier_path_to_attribute(path: Path) -> Attribute(Message) {
+  case path {
+    OpenPath(first:, second:, rest:) -> {
+      let value = "M " <> vector_to_svg(first.position) <> curve(first, second)
 
-  let #(last, value) =
-    list.fold(path.rest, from: #(path.second, value), with: fn(acc, end) {
-      let #(start, value) = acc
+      let #(_, value) =
+        list.fold(rest, from: #(second, value), with: fn(acc, end) {
+          let #(start, value) = acc
 
-      let segment = curve(start, end)
-      #(end, value <> segment)
-    })
+          let segment = curve(start, end)
+          #(end, value <> segment)
+        })
 
-  let value = case path.closed {
-    True -> value <> curve(last, path.first) <> " Z"
-    False -> value
+      attribute.attribute("d", value)
+    }
+    ClosedPath(first:, second:, third:, rest:) -> {
+      let value =
+        "M "
+        <> vector_to_svg(first.position)
+        <> curve(first, second)
+        <> curve(second, third)
+
+      let #(last, value) =
+        list.fold(rest, from: #(third, value), with: fn(acc, end) {
+          let #(start, value) = acc
+
+          let segment = curve(start, end)
+          #(end, value <> segment)
+        })
+
+      let value = value <> curve(last, first) <> " Z"
+
+      attribute.attribute("d", value)
+    }
   }
-
-  attribute.attribute("d", value)
-  // case path.vertices {
-  //   // a path needs at least 2 vertices
-  //   [first, second, ..vertices] -> {
-  //     let value = "M " <> vector_to_svg(first.position) <> curve(first, second)
-
-  //     let #(last, value) =
-  //       list.fold(vertices, from: #(second, value), with: fn(acc, end) {
-  //         let #(start, value) = acc
-
-  //         let segment = curve(start, end)
-  //         #(end, value <> segment)
-  //       })
-
-  //     let value = case path.closed {
-  //       True -> value <> curve(last, first) <> " Z"
-  //       False -> value
-  //     }
-
-  //     attribute.attribute("d", value)
-  //   }
-  //   _ -> attribute.none()
-  // }
 }
 
 fn curve(start: Vertex, end: Vertex) -> String {
@@ -1972,25 +1892,37 @@ fn vector_to_svg(vector: Vector) -> String {
   float.to_string(vector.x) <> " " <> float.to_string(vector.y)
 }
 
-pub fn bezier_path_decoder() -> Decoder(BezierPath) {
+pub fn bezier_path_decoder() -> Decoder(Path) {
   use closed <- decode.optional_field("c", False, decode.bool)
   use positions <- decode.field("v", decode.list(of: vector_decoder()))
   use out_tangents <- decode.field("o", decode.list(of: vector_decoder()))
   use in_tangents <- decode.field("i", decode.list(of: vector_decoder()))
 
-  let path = {
-    use vertices <- result.try(
-      build_vertices_loop(positions, out_tangents, in_tangents, []),
-    )
-    case vertices {
-      [first, second, ..rest] -> Ok(BezierPath(closed:, first:, second:, rest:))
-      _ -> Error(Nil)
-    }
-  }
+  let vertices =
+    build_vertices_loop(positions, out_tangents, in_tangents, built: [])
 
-  case path {
-    Ok(path) -> decode.success(path)
-    Error(Nil) -> decode.failure(zero_bezier_path, expected: "BezierPath")
+  case closed, vertices {
+    _, Error(Nil) -> decode.failure(zero_bezier_path, expected: "Path")
+    True, Ok(vertices) ->
+      case vertices {
+        [first, second, third, ..rest] ->
+          decode.success(ClosedPath(first:, second:, third:, rest:))
+        _ ->
+          decode.failure(
+            zero_bezier_path,
+            expected: "A closed path with at least 3 vertices",
+          )
+      }
+    False, Ok(vertices) ->
+      case vertices {
+        [first, second, ..rest] ->
+          decode.success(OpenPath(first:, second:, rest:))
+        _ ->
+          decode.failure(
+            zero_bezier_path,
+            expected: "An open path with at least 2 vertices",
+          )
+      }
   }
 }
 
@@ -1998,7 +1930,7 @@ fn build_vertices_loop(
   positions: List(Vector),
   out_tangents: List(Vector),
   in_tangents: List(Vector),
-  vertices: List(Vertex),
+  built vertices: List(Vertex),
 ) -> Result(List(Vertex), Nil) {
   case positions, out_tangents, in_tangents {
     [], [], [] -> Ok(list.reverse(vertices))
