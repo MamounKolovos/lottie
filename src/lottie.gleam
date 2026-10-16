@@ -1529,6 +1529,8 @@ pub fn property_decoder(
   decode.one_of(animated_property_decoder, [static_property_decoder])
 }
 
+/// Lottie easing tangents have a quirk where unlike traditional path tangents, the curve goes from out to in
+/// on the *same* keyframe. Traditional path tangents have the curve go from current out to next in
 pub type Keyframe(value, easing) {
   Keyframe(
     frame: Float,
