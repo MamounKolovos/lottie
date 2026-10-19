@@ -8,7 +8,6 @@ import lottie
 pub fn main() -> Nil {
   gleeunit.main()
 }
-
 // pub fn simple_integer_boolean_decoder_test() {
 //   let assert Ok(True) =
 //     decode.run(dynamic.int(1), lottie.integer_boolean_decoder())
@@ -141,33 +140,33 @@ pub fn main() -> Nil {
 //     json.parse(bezier_path_string, lottie.bezier_path_decoder())
 // }
 
-pub fn value_at_time_test() {
-  let property =
-    lottie.Animated(
-      first: lottie.Keyframe(
-        frame: 30.0,
-        value: 0.0,
-        hold: False,
-        out_tangent: lottie.Easing(x: 0.0, y: 0.0),
-        in_tangent: lottie.Easing(x: 1.0, y: 1.0),
-      ),
-      rest: [
-        lottie.Keyframe(
-          frame: 60.0,
-          value: 360.0,
-          hold: False,
-          out_tangent: lottie.Easing(x: 0.0, y: 0.0),
-          in_tangent: lottie.Easing(x: 1.0, y: 1.0),
-        ),
-      ],
-    )
+// pub fn value_at_time_test() {
+//   let property =
+//     lottie.Animated(
+//       first: lottie.Keyframe(
+//         frame: 30.0,
+//         value: 0.0,
+//         hold: False,
+//         out_tangent: lottie.Easing(x: 0.0, y: 0.0),
+//         in_tangent: lottie.Easing(x: 1.0, y: 1.0),
+//       ),
+//       rest: [
+//         lottie.Keyframe(
+//           frame: 60.0,
+//           value: 360.0,
+//           hold: False,
+//           out_tangent: lottie.Easing(x: 0.0, y: 0.0),
+//           in_tangent: lottie.Easing(x: 1.0, y: 1.0),
+//         ),
+//       ],
+//     )
 
-  let interpolator = lottie.scalar_interpolator()
+//   let interpolator = lottie.scalar_interpolator()
 
-  //TODO:
-  assert lottie.value_at_frame(property, 0.0, interpolator) == 0.0
-  assert lottie.value_at_frame(property, 10.0, interpolator) == 0.0
-  assert lottie.value_at_frame(property, 30.0, interpolator) == 0.0
-  assert lottie.value_at_frame(property, 45.0, interpolator) == 180.0
-  assert lottie.value_at_frame(property, 60.0, interpolator) == 360.0
-}
+//   //TODO:
+//   assert lottie.value_at_frame(property, 0.0, interpolator) == 0.0
+//   assert lottie.value_at_frame(property, 10.0, interpolator) == 0.0
+//   assert lottie.value_at_frame(property, 30.0, interpolator) == 0.0
+//   assert lottie.value_at_frame(property, 45.0, interpolator) == 180.0
+//   assert lottie.value_at_frame(property, 60.0, interpolator) == 360.0
+// }

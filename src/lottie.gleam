@@ -4,6 +4,7 @@ import gleam/deque.{type Deque}
 import gleam/dict.{type Dict}
 import gleam/dynamic/decode.{type Decoder}
 import gleam/float
+import gleam/function
 import gleam/int
 import gleam/io
 import gleam/json.{type Json}
@@ -83,6 +84,7 @@ pub fn init(_args: Nil) -> #(Model, Effect(Message)) {
     rsvp.get(
       // "/Basic_Comp.json",
       "/Lottiefiles_Basic_Comp.json",
+      // "/thingy.json",
       // "/trophy.json",
       rsvp.expect_json(animation_decoder(), ReturnedAnimation),
     )
@@ -1088,12 +1090,14 @@ pub fn from_transform(transform: Transform, frame: Float) -> #(Affine, Float) {
 
 fn position_at_frame(position: Position, frame: Float) -> Vector {
   case position {
-    Split(x:, y:) -> {
+    SplitPosition(x:, y:) -> {
       let x = value_at_frame(x, frame, scalar_interpolator())
       let y = value_at_frame(y, frame, scalar_interpolator())
       Vector(x, y)
     }
-    Joint(position) -> value_at_frame(position, frame, vector_interpolator())
+    StaticPosition(value) -> value
+    AnimatedPosition(Animated(first:, rest:)) ->
+      find_value_at_frame_loop(first, rest, frame, position_interpolator())
   }
 }
 
@@ -1129,14 +1133,9 @@ pub type Transform {
   )
 }
 
-pub type Position {
-  Split(x: Property(Float, Float), y: Property(Float, Float))
-  Joint(Property(Vector, Vector))
-}
-
 const identity_transform = Transform(
   anchor_point: Static(Vector(0.0, 0.0)),
-  position: Joint(Static(Vector(0.0, 0.0))),
+  position: StaticPosition(zero_vector),
   rotation: Static(0.0),
   scale: Static(Vector(100.0, 100.0)),
   opacity: Static(100.0),
@@ -1147,37 +1146,37 @@ const identity_transform = Transform(
 pub fn transform_decoder() -> Decoder(Transform) {
   use anchor_point <- decode.optional_field(
     "a",
-    Static(Vector(0.0, 0.0)),
+    identity_transform.anchor_point,
     vector_property_decoder(),
   )
   use position <- decode.optional_field(
     "p",
-    Joint(Static(Vector(0.0, 0.0))),
+    identity_transform.position,
     position_decoder(),
   )
   use rotation <- decode.optional_field(
     "r",
-    Static(0.0),
+    identity_transform.rotation,
     scalar_property_decoder(),
   )
   use scale <- decode.optional_field(
     "s",
-    Static(Vector(100.0, 100.0)),
+    identity_transform.scale,
     vector_property_decoder(),
   )
   use opacity <- decode.optional_field(
     "o",
-    Static(100.0),
+    identity_transform.opacity,
     scalar_property_decoder(),
   )
   use skew <- decode.optional_field(
     "sk",
-    Static(0.0),
+    identity_transform.skew,
     scalar_property_decoder(),
   )
   use skew_axis <- decode.optional_field(
     "sa",
-    Static(0.0),
+    identity_transform.skew_axis,
     scalar_property_decoder(),
   )
   decode.success(Transform(
@@ -1199,57 +1198,58 @@ fn field_option(
   decode.optional_field(key, option.None, decode.optional(field_decoder), next)
 }
 
-//TODO: look into if an iv array is necessary here instead of a dict
-// reason being that in order to interpolate values properly you need to know the current keyframe and the next keyframe
-// and since dicts are not ordered you cannot easily get the "next" keyframe
-//TODO: also idk if this should be generic if it's fundamentally a closed set idk
-pub type Property(value, easing) {
+pub type Property(value, easing_shape) {
   Static(value)
-  //TODO: can probably switch this to a list and use a binary search tree to get O(logn) time complexity insteasd of iv + traditional binary search
-  // Animated(iv.Array(Keyframe(value, easing)))
-  // Animated(List(Keyframe(value, easing)))
-  Animated(first: Keyframe(value, easing), rest: List(Keyframe(value, easing)))
+  AnimatedProperty(Animated(value, easing_shape))
 }
 
-//TODO: finish this and start using value_at_time for basic compilation stuff
-//TODO: finish this and start using value_at_time for basic compilation stuff
-//TODO: finish this and start using value_at_time for basic compilation stuff
-//TODO: finish this and start using value_at_time for basic compilation stuff
-//TODO: finish this and start using value_at_time for basic compilation stuff
-//TODO: finish this and start using value_at_time for basic compilation stuff
-//TODO: finish this and start using value_at_time for basic compilation stuff
-pub type Interpolator(value, easing) {
+pub type Animated(value, easing_shape) {
+  Animated(
+    first: Keyframe(value, easing_shape),
+    rest: List(Keyframe(value, easing_shape)),
+  )
+}
+
+// TODO: rename easing to easing_shape or something more accurate
+pub type Interpolator(input, output, easing) {
   Interpolator(
     ease: fn(Float, Easing(easing), Easing(easing)) -> easing,
-    lerp: fn(easing, value, value) -> value,
+    lerp: fn(easing, input, input) -> output,
+    resolve: fn(input) -> output,
   )
 }
 
 pub fn value_at_frame(
-  property: Property(value, easing),
+  property: Property(input, easing),
   frame: Float,
-  interpolator: Interpolator(value, easing),
-) -> value {
+  interpolator: Interpolator(input, output, easing),
+) -> output {
   case property {
-    Static(value) -> value
-    Animated(first:, rest:) ->
+    Static(value) -> interpolator.resolve(value)
+    AnimatedProperty(Animated(first:, rest:)) ->
       find_value_at_frame_loop(first, rest, frame, interpolator)
   }
 }
 
 fn find_value_at_frame_loop(
-  start: Keyframe(value, easing),
-  rest: List(Keyframe(value, easing)),
+  start: Keyframe(input, easing),
+  rest: List(Keyframe(input, easing)),
   frame: Float,
-  interpolator: Interpolator(value, easing),
-) -> value {
-  use <- bool.guard(start.frame >=. frame, return: start.value)
+  interpolator: Interpolator(input, output, easing),
+) -> output {
+  use <- bool.guard(
+    start.frame >=. frame,
+    return: interpolator.resolve(start.value),
+  )
 
   case rest {
     [end, ..rest] ->
       case end.frame >. frame {
         True -> {
-          use <- bool.guard(start.hold, return: start.value)
+          use <- bool.guard(
+            start.hold,
+            return: interpolator.resolve(start.value),
+          )
 
           let x = { frame -. start.frame } /. { end.frame -. start.frame }
           let y = interpolator.ease(x, start.out_tangent, start.in_tangent)
@@ -1259,49 +1259,144 @@ fn find_value_at_frame_loop(
         }
         False -> find_value_at_frame_loop(end, rest, frame, interpolator)
       }
-    [] -> start.value
+    [] -> interpolator.resolve(start.value)
   }
 }
 
-pub fn scalar_interpolator() -> Interpolator(Float, Float) {
-  Interpolator(
-    ease: fn(x, out_tangent, in_tangent) {
-      let t = newton_raphson(x, out_tangent.x, in_tangent.x)
-      cubic_bezier(t, out_tangent.y, in_tangent.y)
-    },
-    lerp:,
-  )
+pub fn scalar_interpolator() -> Interpolator(Float, Float, Float) {
+  Interpolator(ease: scalar_ease, lerp:, resolve: function.identity)
 }
 
-pub fn vector_interpolator() -> Interpolator(Vector, Vector) {
+pub fn vector_interpolator() -> Interpolator(Vector, Vector, Vector) {
   Interpolator(
-    ease: fn(x, out_tangent: Easing(Vector), in_tangent: Easing(Vector)) {
-      let yx = {
-        let t = newton_raphson(x, out_tangent.x.x, in_tangent.x.x)
-        cubic_bezier(t, out_tangent.y.x, in_tangent.y.x)
-      }
-
-      let yy = {
-        let t = newton_raphson(x, out_tangent.x.y, in_tangent.x.y)
-        cubic_bezier(t, out_tangent.y.y, in_tangent.y.y)
-      }
-
-      Vector(yx, yy)
-    },
+    ease: vector_ease,
     lerp: fn(t, start: Vector, end: Vector) {
       let x = lerp(t.x, start.x, end.x)
       let y = lerp(t.y, start.y, end.y)
       Vector(x, y)
     },
+    resolve: function.identity,
   )
 }
 
-pub fn color_interpolator() -> Interpolator(Color, Float) {
+pub type ArcLengthTable {
+  ArcLengthTable(
+    first: ArcLengthSample,
+    rest: List(ArcLengthSample),
+    total_length: Float,
+  )
+}
+
+pub type ArcLengthSample {
+  ArcLengthSample(t: Float, distance: Float)
+}
+
+fn build_arc_length_table(
+  from start: Vertex,
+  to end: Vertex,
+  subdivisions n: Int,
+) -> ArcLengthTable {
+  let first = ArcLengthSample(t: 0.0, distance: 0.0)
+
+  let #(samples, _, total_length) =
+    int.range(
+      from: 1,
+      to: n + 1,
+      with: #([], start.position, 0.0),
+      run: fn(acc, i) {
+        let #(samples, prev_position, total_length) = acc
+
+        let t = int.to_float(i) /. int.to_float(n)
+
+        let current_position =
+          point_on_cubic_bezier(
+            t,
+            start.position,
+            vector_add(start.position, start.out_tangent),
+            vector_add(end.position, start.in_tangent),
+            end.position,
+          )
+        let distance = vector_distance(prev_position, current_position)
+
+        #(
+          [ArcLengthSample(t:, distance: distance +. total_length), ..samples],
+          current_position,
+          total_length +. distance,
+        )
+      },
+    )
+
+  ArcLengthTable(first:, rest: list.reverse(samples), total_length:)
+}
+
+fn t_at_distance(table: ArcLengthTable, distance: Float) -> Float {
+  t_at_distance_loop(table.first, table.rest, distance)
+}
+
+fn t_at_distance_loop(
+  start: ArcLengthSample,
+  rest: List(ArcLengthSample),
+  distance: Float,
+) -> Float {
+  case rest {
+    [end, ..rest] ->
+      case start.distance <=. distance && distance <=. end.distance {
+        True -> {
+          let distance_progress =
+            { distance -. start.distance } /. { end.distance -. start.distance }
+          lerp(distance_progress, start.t, end.t)
+        }
+        False -> t_at_distance_loop(end, rest, distance)
+      }
+    [] -> start.t
+  }
+}
+
+pub fn position_interpolator() -> Interpolator(Vertex, Vector, Float) {
   Interpolator(
-    ease: fn(x, out_tangent, in_tangent) {
-      let t = newton_raphson(x, out_tangent.x, in_tangent.x)
-      cubic_bezier(t, out_tangent.y, in_tangent.y)
+    ease: scalar_ease,
+    lerp: fn(ease_t, start: Vertex, end: Vertex) {
+      case start, end {
+        // temporary optimization until IR
+        Vertex(out_tangent: Vector(0.0, 0.0), in_tangent: Vector(0.0, 0.0), ..),
+          Vertex(
+            out_tangent: Vector(0.0, 0.0),
+            in_tangent: Vector(0.0, 0.0),
+            ..,
+          )
+        -> {
+          let x = lerp(ease_t, start.position.x, end.position.x)
+          let y = lerp(ease_t, start.position.y, end.position.y)
+          Vector(x, y)
+        }
+        start, end -> {
+          let table =
+            build_arc_length_table(from: start, to: end, subdivisions: 100)
+
+          let desired_distance =
+            // to handle overshoot
+            float.clamp(ease_t, 0.0, 1.0) *. table.total_length
+          let t = t_at_distance(table, desired_distance)
+
+          let value =
+            point_on_cubic_bezier(
+              t,
+              start.position,
+              vector_add(start.position, start.out_tangent),
+              vector_add(end.position, start.in_tangent),
+              end.position,
+            )
+          value
+        }
+      }
     },
+    resolve: fn(value) { value.position },
+  )
+}
+
+pub fn color_interpolator() -> Interpolator(Color, Color, Float) {
+  Interpolator(
+    ease: scalar_ease,
     lerp: fn(t, start: Color, end: Color) {
       let r = lerp(t, start.r, end.r)
       let g = lerp(t, start.g, end.g)
@@ -1309,15 +1404,13 @@ pub fn color_interpolator() -> Interpolator(Color, Float) {
       let a = lerp(t, start.a, end.a)
       Color(r:, g:, b:, a:)
     },
+    resolve: function.identity,
   )
 }
 
-pub fn path_interpolator() -> Interpolator(Path, Float) {
+pub fn path_interpolator() -> Interpolator(Path, Path, Float) {
   Interpolator(
-    ease: fn(x, out_tangent, in_tangent) {
-      let t = newton_raphson(x, out_tangent.x, in_tangent.x)
-      cubic_bezier(t, out_tangent.y, in_tangent.y)
-    },
+    ease: scalar_ease,
     lerp: fn(t, start: Path, end: Path) {
       case start, end {
         OpenPath(..), OpenPath(..) -> {
@@ -1350,7 +1443,35 @@ pub fn path_interpolator() -> Interpolator(Path, Float) {
         _, _ -> end
       }
     },
+    resolve: function.identity,
   )
+}
+
+fn vector_ease(
+  x: Float,
+  out_tangent: Easing(Vector),
+  in_tangent: Easing(Vector),
+) -> Vector {
+  let yx = {
+    let t = newton_raphson(x, out_tangent.x.x, in_tangent.x.x)
+    cubic_bezier(t, out_tangent.y.x, in_tangent.y.x)
+  }
+
+  let yy = {
+    let t = newton_raphson(x, out_tangent.x.y, in_tangent.x.y)
+    cubic_bezier(t, out_tangent.y.y, in_tangent.y.y)
+  }
+
+  Vector(yx, yy)
+}
+
+fn scalar_ease(
+  x: Float,
+  out_tangent: Easing(Float),
+  in_tangent: Easing(Float),
+) -> Float {
+  let t = newton_raphson(x, out_tangent.x, in_tangent.x)
+  cubic_bezier(t, out_tangent.y, in_tangent.y)
 }
 
 fn vertex_lerp(t: Float, a: Vertex, b: Vertex) -> Vertex {
@@ -1409,12 +1530,42 @@ fn newton_raphson_loop(
   }
 }
 
+//TODO: default to 0 and 1 for easing and have all 4 params
 fn cubic_bezier(t: Float, a0: Float, a1: Float) -> Float {
   let t2 = t *. t
   let t3 = t2 *. t
   let mt = 1.0 -. t
 
   { 3.0 *. mt *. mt *. t *. a0 } +. { 3.0 *. mt *. t2 *. a1 } +. t3
+}
+
+fn point_on_cubic_bezier(
+  t: Float,
+  p0: Vector,
+  p1: Vector,
+  p2: Vector,
+  p3: Vector,
+) -> Vector {
+  let x = full_cubic_bezier(t, p0.x, p1.x, p2.x, p3.x)
+  let y = full_cubic_bezier(t, p0.y, p1.y, p2.y, p3.y)
+  Vector(x, y)
+}
+
+fn full_cubic_bezier(
+  t: Float,
+  a0: Float,
+  a1: Float,
+  a2: Float,
+  a3: Float,
+) -> Float {
+  let mt = 1.0 -. t
+  let t2 = t *. t
+  let mt2 = mt *. mt
+
+  { mt2 *. mt *. a0 }
+  +. { 3.0 *. mt2 *. t *. a1 }
+  +. { 3.0 *. mt *. t2 *. a2 }
+  +. { t2 *. t *. a3 }
 }
 
 fn cubic_bezier_derivative(t: Float, a0: Float, a1: Float) -> Float {
@@ -1425,6 +1576,26 @@ fn cubic_bezier_derivative(t: Float, a0: Float, a1: Float) -> Float {
   +. { 3.0 *. t *. t *. { 1.0 -. a1 } }
 }
 
+// fn full_cubic_bezier_derivative(
+//   t: Float,
+//   a0: Float,
+//   a1: Float,
+//   a2: Float,
+//   a3: Float,
+// ) -> Float {
+//   let mt = 1.0 -. t
+
+//   { 3.0 *. mt *. mt *. { a1 -. a0 } }
+//   +. { 6.0 *. mt *. t *. { a2 -. a1 } }
+//   +. { 3.0 *. t *. t *. { a3 -. a2 } }
+// }
+
+pub type Position {
+  SplitPosition(x: Property(Float, Float), y: Property(Float, Float))
+  StaticPosition(Vector)
+  AnimatedPosition(Animated(Vertex, Float))
+}
+
 pub fn position_decoder() -> Decoder(Position) {
   use splittable <- decode.optional_field("s", False, decode.bool)
 
@@ -1432,11 +1603,29 @@ pub fn position_decoder() -> Decoder(Position) {
     True -> {
       use x <- decode.field("x", scalar_property_decoder())
       use y <- decode.field("y", scalar_property_decoder())
-      decode.success(Split(x:, y:))
+      decode.success(SplitPosition(x:, y:))
     }
     False -> {
-      use value <- decode.then(vector_property_decoder())
-      decode.success(Joint(value))
+      let static_property_decoder = {
+        use value <- decode.field("k", vector_decoder())
+        decode.success(StaticPosition(value))
+      }
+
+      let animated_property_decoder = {
+        use keyframes <- decode.field("k", {
+          decode.list(of: position_keyframe_decoder())
+        })
+        case keyframes {
+          [first, ..rest] ->
+            Animated(first:, rest:) |> AnimatedPosition |> decode.success
+          _ -> decode.failure(StaticPosition(zero_vector), "PositionProperty")
+        }
+      }
+
+      // the spec mandates that the "a" (animated) flag field is present on every property.
+      // in practice several exporters omit it, so we're forced to infer whether the property is animated from its structure.
+      // decode.one_of(static_property_decoder, [animated_property_decoder])
+      decode.one_of(animated_property_decoder, [static_property_decoder])
     }
   }
 }
@@ -1496,6 +1685,7 @@ pub fn path_property_decoder() -> Decoder(Property(Path, Float)) {
   )
 }
 
+//TODO: label the params
 pub fn property_decoder(
   value_decoder: Decoder(value),
   easing_decoder: Decoder(Easing(easing)),
@@ -1518,7 +1708,8 @@ pub fn property_decoder(
       ))
     })
     case keyframes {
-      [first, ..rest] -> decode.success(Animated(first:, rest:))
+      [first, ..rest] ->
+        Animated(first:, rest:) |> AnimatedProperty |> decode.success
       _ -> decode.failure(Static(default_value), "Property")
     }
   }
@@ -1541,6 +1732,7 @@ pub type Keyframe(value, easing) {
   )
 }
 
+//TODO: label the params
 pub fn keyframe_decoder(
   value_decoder: Decoder(value),
   easing_decoder: Decoder(Easing(easing)),
@@ -1562,6 +1754,43 @@ pub fn keyframe_decoder(
   )
 
   decode.success(Keyframe(frame:, value:, hold:, out_tangent:, in_tangent:))
+}
+
+pub fn position_keyframe_decoder() -> Decoder(Keyframe(Vertex, Float)) {
+  use Keyframe(frame:, value:, hold:, out_tangent:, in_tangent:) <- decode.then(
+    keyframe_decoder(
+      vector_decoder(),
+      scalar_easing_decoder(),
+      Easing(x: 0.0, y: 0.0),
+      Easing(x: 1.0, y: 1.0),
+    ),
+  )
+
+  use spatial_out_tangent <- decode.optional_field(
+    "to",
+    zero_vector,
+    vector_decoder(),
+  )
+  use spatial_in_tangent <- decode.optional_field(
+    "ti",
+    zero_vector,
+    vector_decoder(),
+  )
+
+  let vertex =
+    Vertex(
+      position: value,
+      out_tangent: spatial_out_tangent,
+      in_tangent: spatial_in_tangent,
+    )
+
+  decode.success(Keyframe(
+    frame:,
+    value: vertex,
+    hold:,
+    out_tangent:,
+    in_tangent:,
+  ))
 }
 
 pub type Easing(shape) {
@@ -1792,6 +2021,15 @@ fn vector_midpoint(a: Vector, b: Vector) -> Vector {
   Vector(x, y)
 }
 
+fn vector_distance(a: Vector, b: Vector) -> Float {
+  let distance_squared =
+    { a.x -. b.x } *. { a.x -. b.x } +. { a.y -. b.y } *. { a.y -. b.y }
+  case float.square_root(distance_squared) {
+    Ok(distance) -> distance
+    Error(Nil) -> 0.0
+  }
+}
+
 fn vector_normal(a: Vector) -> Vector {
   Vector(-1.0 *. a.y, a.x)
 }
@@ -1844,6 +2082,7 @@ const zero_vertex = Vertex(
   in_tangent: zero_vector,
 )
 
+//TODO: rename to "path_to_attribute", bezier is implicit
 fn bezier_path_to_attribute(path: Path) -> Attribute(Message) {
   case path {
     OpenPath(first:, second:, rest:) -> {
