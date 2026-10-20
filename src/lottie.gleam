@@ -83,9 +83,9 @@ pub fn init(_args: Nil) -> #(Model, Effect(Message)) {
   let fetch_animation =
     rsvp.get(
       // "/Basic_Comp.json",
-      "/Lottiefiles_Basic_Comp.json",
+      // "/Lottiefiles_Basic_Comp.json",
       // "/thingy.json",
-      // "/trophy.json",
+      "/trophy.json",
       rsvp.expect_json(animation_decoder(), ReturnedAnimation),
     )
   #(Loading, fetch_animation)
@@ -165,7 +165,13 @@ pub fn compile(animation: Animation, frame: Float) -> Element(Message) {
     // the last element in svg has the highest z index
     list.reverse(animation.layers)
       |> list.map(fn(layer) {
-        compile_layer(layer, animation.index_to_layer, frame)
+        compile_layer(
+          layer,
+          animation.index_to_layer,
+          animation.assets,
+          animation.fps,
+          frame,
+        )
       }),
   )
 }
@@ -179,6 +185,7 @@ pub type Animation {
     height: Int,
     layers: List(Layer),
     index_to_layer: Dict(Int, Layer),
+    assets: Dict(String, Asset),
   )
 }
 
@@ -188,6 +195,31 @@ pub fn animation_decoder() -> Decoder(Animation) {
   use out_point <- decode.field("op", decode.float)
   use width <- decode.field("w", decode.int)
   use height <- decode.field("h", decode.int)
+  use Composition(layers:, index_to_layer:) <- decode.then(
+    composition_decoder(),
+  )
+  use assets <- decode.field("assets", {
+    use id_asset_pairs <- decode.then(decode.list(of: asset_decoder()))
+    dict.from_list(id_asset_pairs) |> decode.success
+  })
+
+  decode.success(Animation(
+    fps:,
+    in_point:,
+    out_point:,
+    width:,
+    height:,
+    layers:,
+    index_to_layer:,
+    assets:,
+  ))
+}
+
+pub type Composition {
+  Composition(layers: List(Layer), index_to_layer: Dict(Int, Layer))
+}
+
+pub fn composition_decoder() -> Decoder(Composition) {
   use #(layers, index_to_layer) <- decode.field("layers", {
     use index_layer_pairs <- decode.then(decode.list(of: layer_decoder()))
 
@@ -202,15 +234,7 @@ pub fn animation_decoder() -> Decoder(Animation) {
       })
     decode.success(#(layers, index_to_layer))
   })
-  decode.success(Animation(
-    fps:,
-    in_point:,
-    out_point:,
-    width:,
-    height:,
-    layers:,
-    index_to_layer:,
-  ))
+  decode.success(Composition(layers:, index_to_layer:))
 }
 
 //TODO: add name field and determine if it belongs here or inside the variant types
@@ -224,26 +248,40 @@ pub type VisualLayer {
     hidden: Bool,
     parent_index: Option(Int),
     time_stretch: Float,
-    in_point: Int,
-    out_point: Int,
-    start_time: Int,
+    in_point: Float,
+    out_point: Float,
+    start_time: Float,
     transform: Transform,
   )
   ShapeLayer(
     hidden: Bool,
     parent_index: Option(Int),
     time_stretch: Float,
-    in_point: Int,
-    out_point: Int,
-    start_time: Int,
+    in_point: Float,
+    out_point: Float,
+    start_time: Float,
     transform: Transform,
     elements: List(GraphicElement),
+  )
+  PrecompositionLayer(
+    hidden: Bool,
+    parent_index: Option(Int),
+    time_stretch: Float,
+    in_point: Float,
+    out_point: Float,
+    start_time: Float,
+    transform: Transform,
+    reference_id: String,
+    width: Int,
+    height: Int,
   )
 }
 
 fn compile_layer(
   layer: Layer,
   index_to_layer: Dict(Int, Layer),
+  assets: Dict(String, Asset),
+  fps: Float,
   frame: Float,
 ) -> Element(Message) {
   case layer {
@@ -264,8 +302,9 @@ fn compile_layer(
       // because im pretty sure most lottie exporters force a top level parent that all layers inherit from
       case parent_transform {
         option.Some(parent_transform) ->
-          compile_visual_layer(layer, parent_transform, frame)
-        option.None -> compile_visual_layer(layer, identity_transform, frame)
+          compile_visual_layer(layer, parent_transform, assets, fps, frame)
+        option.None ->
+          compile_visual_layer(layer, identity_transform, assets, fps, frame)
       }
     }
     DataLayer -> element.none()
@@ -275,6 +314,8 @@ fn compile_layer(
 fn compile_visual_layer(
   layer: VisualLayer,
   parent_transform: Transform,
+  assets: Dict(String, Asset),
+  fps: Float,
   frame: Float,
 ) -> Element(Message) {
   let #(parent_affine, _) = from_transform(parent_transform, frame)
@@ -298,7 +339,46 @@ fn compile_visual_layer(
           start_time:,
           transform:,
           elements:,
-        ) -> list.reverse(elements) |> compile_graphic_elements_loop([], frame)
+        ) -> {
+          case in_point <=. frame && frame <. out_point {
+            True ->
+              list.reverse(elements) |> compile_graphic_elements_loop([], frame)
+            False -> element.none()
+          }
+        }
+        PrecompositionLayer(
+          hidden:,
+          parent_index:,
+          time_stretch:,
+          in_point:,
+          out_point:,
+          start_time:,
+          transform:,
+          reference_id:,
+          width:,
+          height:,
+        ) -> {
+          case dict.get(assets, reference_id) {
+            Ok(Precomposition(name:, fps: child_fps, layers:, index_to_layer:)) -> {
+              let child_fps = option.unwrap(child_fps, fps)
+              let fps_ratio = child_fps /. fps
+              let child_frame = { frame -. start_time } *. fps_ratio
+
+              list.reverse(layers)
+              |> list.map(fn(layer) {
+                compile_layer(
+                  layer,
+                  index_to_layer,
+                  assets,
+                  child_fps,
+                  child_frame,
+                )
+              })
+              |> element.fragment
+            }
+            _ -> element.none()
+          }
+        }
       },
     ],
   )
@@ -363,14 +443,36 @@ pub fn layer_decoder() -> Decoder(#(Option(Int), Layer)) {
   use hidden <- decode.optional_field("hd", False, decode.bool)
   use parent_index <- field_option("parent", decode.int)
   use time_stretch <- decode.optional_field("sr", 1.0, decode.float)
-  use in_point <- decode.field("ip", decode.int)
-  use out_point <- decode.field("op", decode.int)
-  use start_time <- decode.field("st", decode.int)
+  use in_point <- decode.field("ip", decode.float)
+  use out_point <- decode.field("op", decode.float)
+  use start_time <- decode.field("st", decode.float)
 
   use index <- field_option("ind", decode.int)
 
   use type_ <- decode.field("ty", decode.int)
   case type_ {
+    0 -> {
+      use transform <- decode.field("ks", transform_decoder())
+      use reference_id <- decode.field("refId", decode.string)
+      use width <- decode.field("w", decode.int)
+      use height <- decode.field("h", decode.int)
+      decode.success(#(
+        index,
+        PrecompositionLayer(
+          hidden:,
+          parent_index:,
+          time_stretch:,
+          in_point:,
+          out_point:,
+          start_time:,
+          transform:,
+          reference_id:,
+          width:,
+          height:,
+        )
+          |> VisualLayer,
+      ))
+    }
     3 -> {
       use transform <- decode.field("ks", transform_decoder())
       decode.success(#(
@@ -458,6 +560,30 @@ pub fn base_layer_decoder() -> Decoder(BaseLayer) {
     out_point:,
     start_time:,
   ))
+}
+
+pub type Asset {
+  Precomposition(
+    name: Option(String),
+    fps: Option(Float),
+    layers: List(Layer),
+    index_to_layer: Dict(Int, Layer),
+  )
+}
+
+pub fn asset_decoder() -> Decoder(#(String, Asset)) {
+  let precomposition_decoder = {
+    use id <- decode.field("id", decode.string)
+    use name <- field_option("nm", decode.string)
+    use fps <- field_option("fr", decode.float)
+    use Composition(layers:, index_to_layer:) <- decode.then(
+      composition_decoder(),
+    )
+    let asset = Precomposition(name:, fps:, layers:, index_to_layer:)
+    decode.success(#(id, asset))
+  }
+
+  decode.one_of(precomposition_decoder, or: [])
 }
 
 // i imagine if you have something like [rect, circle, fill, ellipse, stroke, transform] the compilation would look like
@@ -1678,7 +1804,7 @@ pub fn color_property_decoder() -> Decoder(Property(Color, Float)) {
 pub fn path_property_decoder() -> Decoder(Property(Path, Float)) {
   property_decoder(
     // for some reason, path keyframe values are just an array with 1 path object
-    decode.at([0], bezier_path_decoder()),
+    decode.one_of(bezier_path_decoder(), [decode.at([0], bezier_path_decoder())]),
     scalar_easing_decoder(),
     zero_bezier_path,
     Easing(x: 0.0, y: 0.0),
