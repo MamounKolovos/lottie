@@ -1677,7 +1677,8 @@ pub fn color_property_decoder() -> Decoder(Property(Color, Float)) {
 
 pub fn path_property_decoder() -> Decoder(Property(Path, Float)) {
   property_decoder(
-    bezier_path_decoder(),
+    // for some reason, path keyframe values are just an array with 1 path object
+    decode.at([0], bezier_path_decoder()),
     scalar_easing_decoder(),
     zero_bezier_path,
     Easing(x: 0.0, y: 0.0),
