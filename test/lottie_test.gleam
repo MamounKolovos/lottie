@@ -8,6 +8,10 @@ import lottie
 pub fn main() -> Nil {
   gleeunit.main()
 }
+
+pub fn hello_test() {
+  Nil
+}
 // pub fn simple_integer_boolean_decoder_test() {
 //   let assert Ok(True) =
 //     decode.run(dynamic.int(1), lottie.integer_boolean_decoder())
